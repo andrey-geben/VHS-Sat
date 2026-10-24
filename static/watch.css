@@ -81,3 +81,11 @@
   background: #eaf3fb; border-left: 4px solid #2d6fa8;
 }
 .viewer-banner code a { color: #2d6fa8; font-weight: 600; }
+
+.about-viewer .viewer-card {
+  background: #1a2230; border-radius: 10px;
+  padding: 1.2rem 1.4rem; margin-bottom: 1rem;
+}
+.about-viewer .viewer-card a { color: #4aa3e0; }
+.about-viewer .viewer-card code { color: #c8d8e4; }
+.about-viewer .back { color: #4aa3e0; text-decoration: none; }

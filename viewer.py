@@ -19,10 +19,11 @@ from flask import (
 from config import config
 from db import get_channel, list_channels
 from event_writer import events
+from frozen_utils import APP_ROOT, RESOURCE_ROOT
 from supervisor import supervisor
 
 
-DATA_DIR = Path(__file__).resolve().parent / "data"
+DATA_DIR = APP_ROOT / "data"
 
 
 def _channel_view(ch: dict) -> dict:
@@ -46,7 +47,11 @@ def _auth_redirect():
 
 
 def create_viewer_app() -> Flask:
-    app = Flask(__name__, template_folder="templates", static_folder="static")
+    app = Flask(
+        __name__,
+        template_folder=str(RESOURCE_ROOT / "templates"),
+        static_folder=str(RESOURCE_ROOT / "static"),
+    )
     app.config["SECRET_KEY"] = config.get("server", "secret_key")
 
     @app.context_processor
@@ -55,6 +60,7 @@ def create_viewer_app() -> Flask:
             "title": config.get("viewer", "title", default="Домашнее ТВ"),
             "viewer_port": config.get("viewer", "port", default=8301),
             "admin_url": _admin_base(),
+            "about": config.get("about", default={}),
         }
 
     @app.before_request
@@ -76,6 +82,10 @@ def create_viewer_app() -> Flask:
         if not ch or not ch.get("enabled"):
             abort(404)
         return render_template("watch_player.html", channel=_channel_view(ch))
+
+    @app.route("/about")
+    def about():
+        return render_template("about_viewer.html")
 
     @app.route("/hls/<int:cid>/<path:filename>")
     def hls_file(cid, filename):

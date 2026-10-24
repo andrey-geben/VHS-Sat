@@ -12,8 +12,9 @@ from typing import Any
 import yaml
 
 
-BASE_DIR = Path(__file__).resolve().parent
-CONFIG_PATH = BASE_DIR / "config.yaml"
+from frozen_utils import APP_ROOT
+
+CONFIG_PATH = APP_ROOT / "config.yaml"
 
 
 DEFAULTS: dict[str, Any] = {

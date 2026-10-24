@@ -1,24 +1,42 @@
-"""Path resolution that works both as script and as frozen .exe."""
+"""Path resolution that works both as script and as frozen .exe.
+
+- APP_ROOT:      writable — next to the .exe, or project root in dev.
+                 Everything that must persist (config.yaml, data/, logs/)
+                 lives here.
+- RESOURCE_ROOT: read-only bundle — sys._MEIPASS in frozen, else project root.
+                 templates/ and static/ live here.
+
+find_tool(): looks for a bundled bin/<name>[.exe] next to the app first,
+then falls back to PATH.
+"""
+from __future__ import annotations
+
+import shutil
 import sys
 from pathlib import Path
 
 
 def _app_root() -> Path:
-    """Folder next to the .exe (or the project root when run as script)."""
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
     return Path(__file__).resolve().parent
 
 
-def _resource_dir() -> Path:
-    """Folder with templates/static. In onefile this is sys._MEIPASS."""
+def _resource_root() -> Path:
     if getattr(sys, "frozen", False):
         return Path(sys._MEIPASS)  # type: ignore[attr-defined]
     return Path(__file__).resolve().parent
 
 
-APP_ROOT = _app_root()          # writable: config.yaml, data/, logs/
-RESOURCE_ROOT = _resource_dir() # read-only: templates/, static/
+APP_ROOT = _app_root()
+RESOURCE_ROOT = _resource_root()
+
+
+def resolve_path(p: str | Path) -> Path:
+    """Resolve relative paths against APP_ROOT (so frozen .exe uses
+    its own folder, not whatever CWD happens to be)."""
+    path = Path(p)
+    return path if path.is_absolute() else APP_ROOT / path
 
 
 def find_tool(name: str) -> str | None:
@@ -27,5 +45,9 @@ def find_tool(name: str) -> str | None:
     bundled = APP_ROOT / "bin" / f"{name}{exe}"
     if bundled.is_file():
         return str(bundled)
-    import shutil
     return shutil.which(name)
+
+
+def detect_lite_tools() -> dict[str, str | None]:
+    """Tools used by the Windows Lite edition."""
+    return {"ffmpeg": find_tool("ffmpeg"), "ffprobe": find_tool("ffprobe")}

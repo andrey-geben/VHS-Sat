@@ -12,14 +12,26 @@ from config import config
 
 class EventWriter:
     def __init__(self, path: str | Path | None = None):
+        from frozen_utils import resolve_path
         if path is None:
             path = config.get("logging", "events_file", default="logs/events.jsonl")
-        self.path = Path(path)
+        self.path = resolve_path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.touch(exist_ok=True)
         self._lock = threading.Lock()
 
+    _LEVELS = {"DEBUG": 10, "INFO": 20, "WARN": 30, "WARNING": 30, "ERROR": 40}
+
     def write(self, level: str, source: str, message: str, **extra: Any) -> None:
+        try:
+            min_level = self._LEVELS.get(
+                str(config.get("logging", "level", default="INFO")).upper(), 20,
+            )
+        except Exception:  # noqa: BLE001
+            min_level = 20
+        if self._LEVELS.get(level.upper(), 20) < min_level:
+            return  # suppressed by logging.level in config.yaml
+
         record = {
             "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "level": level.upper(),
@@ -32,7 +44,6 @@ class EventWriter:
         with self._lock:
             with self.path.open("a", encoding="utf-8") as fh:
                 fh.write(line + "\n")
-
     def info(self, source: str, message: str, **kw: Any) -> None:
         self.write("INFO", source, message, **kw)
 

@@ -18,7 +18,9 @@ def _quote_path(p: Path | str) -> str:
 class FolderSource:
     def __init__(self, channel: dict, base_dir: Path | None = None):
         self.channel = channel
-        self.base_dir = base_dir or Path(__file__).resolve().parent.parent
+        from frozen_utils import APP_ROOT
+
+        self.base_dir = base_dir or APP_ROOT
         self.data_dir = self.base_dir / "data"
         self.playlist_dir = self.data_dir / "playlists"
         self.bumper_dir = self.data_dir / "bumpers"

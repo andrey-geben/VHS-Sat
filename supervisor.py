@@ -9,10 +9,21 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from event_writer import events
-from sources import FolderSource
+from sources import FolderSource, StreamSource
+
+
+def _make_source(channel: dict):
+    st = channel.get("source_type") or "folder"
+    if st == "folder":
+        return FolderSource(channel)
+    if st in ("iptv", "camera"):
+        return StreamSource(channel)
+    raise ValueError(f"unknown source_type: {st}")
 
 
 class ChannelRunner(threading.Thread):
+    RESTART_DELAY = 3.0
+
     def __init__(self, channel: dict):
         super().__init__(daemon=True, name=f"channel-{channel['id']}")
         self.channel = channel
@@ -26,7 +37,6 @@ class ChannelRunner(threading.Thread):
             "error": None,
         }
 
-    # ---------- public ----------
     def stop(self) -> None:
         self.stop_event.set()
 
@@ -43,35 +53,17 @@ class ChannelRunner(threading.Thread):
         self.state["running"] = True
         self.state["started_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
         try:
-            source = FolderSource(self.channel)
-            outputs = self.enabled_outputs()
-            if not outputs:
-                raise RuntimeError("no output enabled (hls/multicast)")
-
-            for out in outputs:
-                cmd = source.build_ffmpeg_cmd(out)
-                events.info("supervisor",
-                            f"channel {self.channel['id']} start output={out}",
-                            cmd=" ".join(cmd[:8]) + " ...")
-                proc = subprocess.Popen(
-                    cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                    text=True, bufsize=1,
-                )
-                self.procs[out] = proc
-                threading.Thread(
-                    target=self._read_progress, args=(out, proc), daemon=True,
-                ).start()
-                threading.Thread(
-                    target=self._read_stderr, args=(out, proc), daemon=True,
-                ).start()
-
-            # monitor
             while not self.stop_event.is_set():
-                time.sleep(1.0)
-                alive = [p for p in self.procs.values() if p.poll() is None]
-                if not alive:
+                self._run_once()
+                if self.stop_event.is_set():
                     break
-
+                if not self._should_restart():
+                    break
+                events.warn("supervisor",
+                            f"channel {self.channel['id']} crashed, "
+                            f"restart in {self.RESTART_DELAY:.0f}s")
+                if self.stop_event.wait(self.RESTART_DELAY):
+                    break
         except Exception as exc:  # noqa: BLE001
             self.state["error"] = str(exc)
             events.error("supervisor",
@@ -79,8 +71,41 @@ class ChannelRunner(threading.Thread):
         finally:
             self._cleanup()
             self.state["running"] = False
+            events.info("supervisor", f"channel {self.channel['id']} stopped")
+
+    def _should_restart(self) -> bool:
+        return self.channel.get("source_type") in ("iptv", "camera")
+
+    def _run_once(self) -> None:
+        source = _make_source(self.channel)
+        outputs = self.enabled_outputs()
+        if not outputs:
+            raise RuntimeError("no output enabled (hls/multicast)")
+
+        for out in outputs:
+            cmd = source.build_ffmpeg_cmd(out)
             events.info("supervisor",
-                        f"channel {self.channel['id']} stopped")
+                        f"channel {self.channel['id']} start output={out}",
+                        cmd=" ".join(cmd[:8]) + " ...")
+            proc = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, bufsize=1,
+            )
+            self.procs[out] = proc
+            threading.Thread(
+                target=self._read_progress, args=(out, proc), daemon=True,
+            ).start()
+            threading.Thread(
+                target=self._read_stderr, args=(out, proc), daemon=True,
+            ).start()
+
+        try:
+            while not self.stop_event.is_set():
+                time.sleep(1.0)
+                if not any(p.poll() is None for p in self.procs.values()):
+                    return
+        finally:
+            self._cleanup()
 
     # ---------- helpers ----------
     def _read_progress(self, out: str, proc: subprocess.Popen) -> None:
@@ -99,15 +124,17 @@ class ChannelRunner(threading.Thread):
             if not line:
                 continue
             low = line.lower()
-            if "opening" in low and "for reading" in low:
-                # best-effort now-playing from ffmpeg log
+            # current_file only for folder channels — streams have URLs, not files
+            if (self.channel.get("source_type") == "folder"
+                    and "opening" in low and "for reading" in low):
                 name = line.split("'", 2)[-2] if "'" in line else line
                 self.state["current_file"] = Path(name).name
             if any(w in low for w in ("error", "failed", "invalid")):
-                events.warn("ffmpeg", f"channel {self.channel['id']} [{out}]: {line[-300:]}")
+                events.warn("ffmpeg",
+                            f"channel {self.channel['id']} [{out}]: {line[-300:]}")
 
     def _cleanup(self) -> None:
-        for name, p in list(self.procs.items()):
+        for _name, p in list(self.procs.items()):
             if p.poll() is None:
                 try:
                     p.terminate()

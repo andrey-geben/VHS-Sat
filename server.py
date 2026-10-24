@@ -16,12 +16,15 @@ from flask import (
 from auth import auth_bp, current_user, hash_password, login_required
 from config import config
 from db import (
-    create_channel, delete_channel, find_channels_by_folder, get_channel,
-    init_db, list_channels, update_channel,
+    create_channel, delete_channel, find_channels_by_folder,
+    find_channels_by_stream_url, get_channel, init_db, list_channels,
+    update_channel,
 )
 from event_writer import events
 from hardware import backend
 from hardware.tools import detect_tools
+from iptv_parser import fetch_playlist, parse_m3u
+from settings_page import settings_bp
 from supervisor import supervisor
 
 
@@ -65,18 +68,37 @@ def _validate_channel_payload(data: dict, exclude_id: int | None = None) -> str 
     name = (data.get("name") or "").strip()
     if not name:
         return "название канала обязательно"
-    folder = (data.get("folder") or "").strip()
-    if not folder:
-        return "путь к папке обязателен"
-    p = Path(folder)
-    if not p.is_dir():
-        return f"папка не существует: {folder}"
-    dup = find_channels_by_folder(folder, exclude_id=exclude_id)
-    if dup:
-        return f"эта папка уже используется каналом «{dup[0]['name']}» (id={dup[0]['id']})"
-    exts = (data.get("file_extensions") or "").lower()
-    if not any(p.suffix.lower().lstrip(".") in exts for p in p.iterdir() if p.is_file()):
-        return "в папке нет видеофайлов с указанными расширениями"
+
+    source_type = (data.get("source_type") or "folder").lower()
+
+    if source_type == "folder":
+        folder = (data.get("folder") or "").strip()
+        if not folder:
+            return "путь к папке обязателен"
+        p = Path(folder)
+        if not p.is_dir():
+            return f"папка не существует: {folder}"
+        dup = find_channels_by_folder(folder, exclude_id=exclude_id)
+        if dup:
+            return f"эта папка уже используется каналом «{dup[0]['name']}» (id={dup[0]['id']})"
+        exts = (data.get("file_extensions") or "").lower()
+        if not any(p.suffix.lower().lstrip(".") in exts for p in p.iterdir() if p.is_file()):
+            return "в папке нет видеофайлов с указанными расширениями"
+
+    elif source_type in ("iptv", "camera"):
+        url = (data.get("stream_url") or "").strip()
+        if not url:
+            return "URL потока обязателен"
+        if not url.startswith(("http://", "https://", "rtsp://", "rtmp://", "udp://", "rtp://")):
+            return "URL должен начинаться с http://, https://, rtsp://, rtmp://, udp:// или rtp://"
+        dup = find_channels_by_stream_url(url)
+        dup = [d for d in dup if d["id"] != exclude_id]
+        if dup:
+            return f"этот URL уже используется каналом «{dup[0]['name']}» (id={dup[0]['id']})"
+
+    else:
+        return f"неизвестный source_type: {source_type}"
+
     if not (data.get("hls_enabled") or data.get("multicast_enabled")):
         return "включите хотя бы один вывод (HLS или multicast)"
     return None
@@ -91,6 +113,7 @@ def create_app() -> Flask:
         (DATA_DIR / sub).mkdir(parents=True, exist_ok=True)
 
     app.register_blueprint(auth_bp)
+    app.register_blueprint(settings_bp)
 
     @app.context_processor
     def inject_globals():
@@ -107,6 +130,9 @@ def create_app() -> Flask:
             "viewer_port": viewer_port,
             "viewer_url": f"http://{host}:{viewer_port}/",
             "admin_port": admin_port,
+            "admin_url": f"http://{host}:{admin_port}/",
+            "about": config.get("about", default={}),
+            "edition": "full",
         }
 
     @app.before_request
@@ -143,7 +169,7 @@ def create_app() -> Flask:
             return redirect(url_for("auth.login"))
         return render_template("setup.html")
 
-    # ---------- dashboard & existing ----------
+    # ---------- dashboard ----------
     @app.route("/")
     @login_required
     def dashboard():
@@ -155,6 +181,7 @@ def create_app() -> Flask:
                                ci_slots=ci_slots, tools=tools,
                                channels=channels)
 
+    # ---------- adapters / hardware ----------
     @app.route("/adapters")
     @login_required
     def adapters_page():
@@ -182,30 +209,7 @@ def create_app() -> Flask:
         return render_template("hardware.html", adapters=adapters,
                                ci_slots=ci_slots, tools=tools)
 
-    @app.route("/events")
-    @login_required
-    def events_page():
-        limit = int(request.args.get("limit", 200))
-        return render_template("events.html", events=events.read_tail(limit))
-
-    @app.route("/settings")
-    @login_required
-    def settings_page():
-        return render_template("settings.html")
-
-    @app.route("/epg")
-    @login_required
-    def epg_page():
-        return render_template("placeholder.html",
-                               page_title="EPG", message="Stage 5")
-
-    @app.route("/recordings")
-    @login_required
-    def recordings_page():
-        return render_template("placeholder.html",
-                               page_title="Записи", message="Stage 5")
-
-    # ---------- local channels (LokalChanel) ----------
+    # ---------- channels ----------
     @app.route("/channels")
     @login_required
     def channels_page():
@@ -226,6 +230,9 @@ def create_app() -> Flask:
             "codec_strategy": request.form.get("codec_strategy", "auto"),
             "bumper_enabled": 1 if _to_bool(request.form.get("bumper_enabled")) else 0,
             "bumper_duration_sec": _to_int(request.form.get("bumper_duration_sec"), 5),
+            "stream_url": None,
+            "stream_user": None,
+            "stream_pass": None,
             "hls_enabled": 1 if _to_bool(request.form.get("hls_enabled", "on")) else 0,
             "multicast_enabled": 1 if _to_bool(request.form.get("multicast_enabled")) else 0,
             "multicast_addr": request.form.get("multicast_addr", "239.1.1.1").strip(),
@@ -245,15 +252,136 @@ def create_app() -> Flask:
         flash(f"Канал «{data['name']}» создан", "info")
         return redirect(url_for("channels_page"))
 
+    @app.route("/channels/create-stream", methods=["POST"])
+    @login_required
+    def channels_create_stream():
+        source_type = request.form.get("source_type", "camera").lower()
+        if source_type not in ("iptv", "camera"):
+            source_type = "camera"
+        data = {
+            "name": request.form.get("name", "").strip(),
+            "source_type": source_type,
+            "folder": None,
+            "rotation": "random",
+            "reshuffle_on_loop": 0,
+            "file_extensions": "mp4,mkv,avi,ts,mov,m4v,webm",
+            "codec_strategy": request.form.get("codec_strategy", "auto"),
+            "bumper_enabled": 0,
+            "bumper_duration_sec": 5,
+            "stream_url": request.form.get("stream_url", "").strip(),
+            "stream_user": request.form.get("stream_user", "").strip() or None,
+            "stream_pass": request.form.get("stream_pass", "").strip() or None,
+            "hls_enabled": 1 if _to_bool(request.form.get("hls_enabled", "on")) else 0,
+            "multicast_enabled": 1 if _to_bool(request.form.get("multicast_enabled")) else 0,
+            "multicast_addr": request.form.get("multicast_addr", "239.1.1.1").strip(),
+            "multicast_port": _to_int(request.form.get("multicast_port"), 5000),
+            "enabled": 1,
+        }
+        err = _validate_channel_payload(data)
+        if err:
+            flash(err, "error")
+            return redirect(url_for("channels_page"))
+        cid = create_channel(data)
+        events.info("channels",
+                    f"created {source_type} channel {cid} '{data['name']}'")
+        flash(f"Канал «{data['name']}» создан", "info")
+        return redirect(url_for("channels_page"))
+
+    @app.route("/channels/iptv/import", methods=["GET", "POST"])
+    @login_required
+    def channels_iptv_import():
+        url = (request.values.get("url") or "").strip()
+        uploaded = request.files.get("file")
+
+        playlist_text = ""
+        if uploaded and uploaded.filename:
+            playlist_text = uploaded.read().decode("utf-8", errors="replace")
+        elif url:
+            try:
+                playlist_text = fetch_playlist(url)
+            except Exception as exc:  # noqa: BLE001
+                flash(f"Не удалось загрузить плейлист: {exc}", "error")
+                return redirect(url_for("channels_page"))
+
+        if not playlist_text:
+            flash("Укажите URL плейлиста или загрузите файл", "error")
+            return redirect(url_for("channels_page"))
+
+        entries = parse_m3u(playlist_text)
+        if not entries:
+            flash("В плейлисте не найдено ни одного канала", "warn")
+            return redirect(url_for("channels_page"))
+
+        groups = sorted({e["group"] for e in entries if e.get("group")})
+        return render_template("iptv_import.html",
+                               entries=entries, groups=groups, source_url=url)
+
+    @app.route("/channels/iptv/bulk-import", methods=["POST"])
+    @login_required
+    def channels_iptv_bulk_import():
+        names = request.form.getlist("name")
+        urls = request.form.getlist("url")
+        strategy = request.form.get("codec_strategy", "auto")
+        hls = 1 if _to_bool(request.form.get("hls_enabled", "on")) else 0
+        mcast = 1 if _to_bool(request.form.get("multicast_enabled")) else 0
+        mcast_addr = request.form.get("multicast_addr", "239.1.1.1").strip()
+        mcast_port = _to_int(request.form.get("multicast_port"), 5000)
+
+        created, skipped = 0, 0
+        next_port = mcast_port
+        for i, u in enumerate(urls):
+            u = u.strip()
+            if not u:
+                continue
+            nm = (names[i].strip() if i < len(names) else "") or f"IPTV {i+1}"
+            data = {
+                "name": nm,
+                "source_type": "iptv",
+                "folder": None,
+                "rotation": "random",
+                "reshuffle_on_loop": 0,
+                "file_extensions": "mp4,mkv,avi,ts,mov,m4v,webm",
+                "codec_strategy": strategy,
+                "bumper_enabled": 0,
+                "bumper_duration_sec": 5,
+                "stream_url": u,
+                "stream_user": None,
+                "stream_pass": None,
+                "hls_enabled": hls,
+                "multicast_enabled": mcast,
+                "multicast_addr": mcast_addr,
+                "multicast_port": next_port,
+                "enabled": 1,
+            }
+            err = _validate_channel_payload(data)
+            if err:
+                skipped += 1
+                continue
+            try:
+                create_channel(data)
+                created += 1
+                if mcast:
+                    next_port += 1
+            except Exception as exc:  # noqa: BLE001
+                skipped += 1
+                events.warn("channels", f"IPTV import: skip {nm}: {exc}")
+
+        events.info("channels",
+                    f"IPTV import: created={created}, skipped={skipped}")
+        flash(f"Импортировано {created} канал(ов)"
+              + (f", пропущено {skipped}" if skipped else ""),
+              "info" if created else "warn")
+        return redirect(url_for("channels_page"))
+
     @app.route("/channels/<int:cid>/edit", methods=["POST"])
     @login_required
     def channels_edit(cid):
         ch = get_channel(cid)
         if not ch:
             abort(404)
+        st = ch["source_type"]
         data = {
             "name": request.form.get("name", "").strip() or ch["name"],
-            "folder": request.form.get("folder", "").strip() or ch["folder"],
             "rotation": request.form.get("rotation", ch["rotation"]),
             "reshuffle_on_loop": 1 if _to_bool(request.form.get("reshuffle_on_loop")) else 0,
             "file_extensions": request.form.get("file_extensions", ch["file_extensions"]),
@@ -265,7 +393,17 @@ def create_app() -> Flask:
             "multicast_addr": request.form.get("multicast_addr", ch["multicast_addr"]).strip(),
             "multicast_port": _to_int(request.form.get("multicast_port"), ch["multicast_port"]),
         }
-        err = _validate_channel_payload(data, exclude_id=cid)
+        if st == "folder":
+            data["folder"] = request.form.get("folder", "").strip() or ch["folder"]
+        else:
+            data["stream_url"] = (request.form.get("stream_url", "").strip()
+                                  or ch["stream_url"])
+            if request.form.get("stream_user") is not None:
+                data["stream_user"] = request.form.get("stream_user", "").strip() or None
+            if request.form.get("stream_pass"):
+                data["stream_pass"] = request.form.get("stream_pass", "").strip() or None
+
+        err = _validate_channel_payload({**ch, **data}, exclude_id=cid)
         if err:
             flash(err, "error")
             return redirect(url_for("channels_page"))
@@ -314,6 +452,47 @@ def create_app() -> Flask:
         flash(f"Канал «{ch['name']}» остановлен", "info")
         return redirect(url_for("channels_page"))
 
+    # ---------- events ----------
+    @app.route("/events")
+    @login_required
+    def events_page():
+        limit = int(request.args.get("limit", 200))
+        return render_template("events.html", events=events.read_tail(limit))
+
+    # ---------- placeholders (stage 5) ----------
+    @app.route("/epg")
+    @login_required
+    def epg_page():
+        return render_template("placeholder.html",
+                               page_title="EPG", message="Stage 5")
+
+    @app.route("/recordings")
+    @login_required
+    def recordings_page():
+        return render_template("placeholder.html",
+                               page_title="Записи", message="Stage 5")
+
+    # ---------- about ----------
+    @app.route("/about")
+    @login_required
+    def about_page():
+        return render_template("about.html")
+
+    # ---------- admin preview of viewer pages ----------
+    @app.route("/watch")
+    @login_required
+    def watch():
+        channels = [_channel_view(c) for c in list_channels()]
+        return render_template("watch.html", channels=channels)
+
+    @app.route("/watch/<int:cid>")
+    @login_required
+    def watch_player(cid):
+        ch = get_channel(cid)
+        if not ch:
+            abort(404)
+        return render_template("watch_player.html", channel=_channel_view(ch))
+
     # ---------- REST API ----------
     @app.route("/api/status")
     def api_status():
@@ -321,6 +500,7 @@ def create_app() -> Flask:
             "title": config.get("server", "title"),
             "backend": backend.name,
             "platform": platform.system(),
+            "edition": "full",
             "auth_enabled": config.get("security", "auth_enabled"),
             "users_configured": config.has_users(),
         })
@@ -433,7 +613,6 @@ def create_app() -> Flask:
         limit = int(request.args.get("limit", 100))
         return jsonify(events.read_tail(limit))
 
-    # ---------- channels API ----------
     @app.route("/api/channels", methods=["GET"])
     @login_required
     def api_channels():
@@ -448,6 +627,9 @@ def create_app() -> Flask:
         data.setdefault("file_extensions", "mp4,mkv,avi,ts,mov,m4v,webm")
         data.setdefault("codec_strategy", "auto")
         data.setdefault("bumper_duration_sec", 5)
+        data.setdefault("stream_url", None)
+        data.setdefault("stream_user", None)
+        data.setdefault("stream_pass", None)
         data.setdefault("multicast_addr", "239.1.1.1")
         data.setdefault("multicast_port", 5000)
         data.setdefault("enabled", 1)
@@ -533,7 +715,6 @@ def _safe(fn, default):
 
 
 def _run_viewer() -> None:
-    """Background thread: run the viewer Flask app on its own port."""
     from werkzeug.serving import make_server
     from viewer import create_viewer_app, _log_startup
 
