@@ -109,6 +109,7 @@
             auto{% if channel.source_type == 'folder' %} (copy → encode при ошибке){% else %} (для iptv = copy, для камеры = encode){% endif %}
           </option>
           <option value="copy" {% if channel.codec_strategy == 'copy' %}selected{% endif %}>copy — без перекодирования (быстро)</option>
+          <option value="copy_video" {% if channel.codec_strategy == 'copy_video' %}selected{% endif %}>copy_video — видео без изменений, звук → AAC (если в источнике AC3 / G.711)</option>
           <option value="encode" {% if channel.codec_strategy == 'encode' %}selected{% endif %}>encode — перекодировать (совместимо с любым браузером)</option>
         </select>
       </label>

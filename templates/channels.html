@@ -45,7 +45,7 @@
               </span>
             {% endif %}
           </div>
-                    <div class="channel-actions">
+          <div class="channel-actions">
             {% if ch.running %}
               <form method="post" action="{{ url_for('channels_stop', cid=ch.id) }}">
                 <button type="submit" class="btn-stop">Стоп</button>
@@ -81,6 +81,13 @@
             <div>
               <span class="stat-label">Сейчас:</span>
               <span class="stat-value">камера транслируется</span>
+            </div>
+          {% endif %}
+
+          {% if ch.epg_next %}
+            <div>
+              <span class="stat-label">Далее:</span>
+              <span class="stat-value">{{ ch.epg_next }}</span>
             </div>
           {% endif %}
 
@@ -211,6 +218,7 @@
         <select name="codec_strategy">
           <option value="auto">auto — copy, при ошибке — encode</option>
           <option value="copy">copy — без перекодирования (быстро; только H.264/AAC)</option>
+          <option value="copy_video">copy_video — видео без изменений, звук → AAC (для AC3 / G.711 в источнике)</option>
           <option value="encode">encode — перекодировать всё (медленно, но совместимо)</option>
         </select>
       </label>
@@ -300,6 +308,7 @@
       <label>Стратегия
         <select name="codec_strategy">
           <option value="auto">auto (для камеры = encode)</option>
+          <option value="copy_video">copy_video — видео без изменений, звук → AAC (рекомендуется для камер с H.264 + G.711)</option>
           <option value="encode">encode — совместимо с браузером (больше CPU)</option>
           <option value="copy">copy — быстро, если камера уже H.264+AAC</option>
         </select>
@@ -344,6 +353,13 @@
       больше 30 секунд. Поток «залип», проверьте <code>/events</code>.</li>
     <li><strong>📋 HLS / 📋 UDP</strong> — копируют ссылку для вставки
       в VLC или на ТВ-приставке.</li>
+    <li><strong>🔊 Звук</strong>: при <code>copy</code> в HLS попадает
+      исходный аудиокодек. Если браузер играет видео без звука — скорее всего,
+      в источнике AC3 / E-AC3 / DTS / G.711. Переключите стратегию на
+      <code>copy_video</code> (видео без изменений, звук → AAC) — это почти
+      бесплатно по CPU.</li>
+    <li><strong>✎ Изменить</strong> — редактирование параметров канала.
+      При сохранении работающий канал перезапускается.</li>
   </ul>
 </section>
 

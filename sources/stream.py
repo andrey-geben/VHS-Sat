@@ -39,7 +39,6 @@ class StreamSource:
         if url.startswith("rtsp://"):
             cmd += ["-rtsp_transport", "tcp"]
 
-        # For HTTP/HTTPS sources ffmpeg can reconnect on its own.
         if url.startswith(("http://", "https://")):
             cmd += ["-reconnect", "1",
                     "-reconnect_streamed", "1",
@@ -50,19 +49,26 @@ class StreamSource:
         # --- codec strategy ---
         strategy = (c.get("codec_strategy") or "auto").lower()
         if strategy == "auto":
-            # IPTV: providers usually push ready-to-use TS/HLS → copy.
+            # IPTV: providers push ready-to-use TS/HLS → copy.
             # Cameras: often H.265/G.711 → must encode for browser HLS.
             strategy = "copy" if c.get("source_type") == "iptv" else "encode"
 
         if strategy == "copy":
             cmd += ["-c", "copy"]
-        else:
+        elif strategy == "encode":
             cmd += [
                 "-c:v", "libx264", "-preset", "veryfast", "-tune", "zerolatency",
                 "-pix_fmt", "yuv420p", "-b:v", "2500k", "-maxrate", "3000k",
                 "-bufsize", "6000k", "-g", "50",
                 "-c:a", "aac", "-b:a", "128k", "-ar", "48000",
             ]
+        elif strategy == "copy_video":
+            cmd += [
+                "-c:v", "copy",
+                "-c:a", "aac", "-b:a", "128k", "-ar", "48000",
+            ]
+        else:
+            cmd += ["-c", "copy"]
 
         # --- output ---
         if output == "multicast":

@@ -15,7 +15,8 @@
       <label>Стратегия
         <select name="codec_strategy">
           <option value="auto">auto (для iptv = copy)</option>
-          <option value="copy">copy — быстро, если провайдер даёт TS-ready</option>
+          <option value="copy">copy — быстро, если провайдер даёт TS-ready (H.264 + AAC)</option>
+          <option value="copy_video">copy_video — видео без изменений, звук → AAC (если провайдер даёт AC3)</option>
           <option value="encode">encode — перекодировать (совместимо с любым браузером)</option>
         </select>
       </label>

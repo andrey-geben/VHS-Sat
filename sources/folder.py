@@ -18,9 +18,7 @@ def _quote_path(p: Path | str) -> str:
 class FolderSource:
     def __init__(self, channel: dict, base_dir: Path | None = None):
         self.channel = channel
-        from frozen_utils import APP_ROOT
-
-        self.base_dir = base_dir or APP_ROOT
+        self.base_dir = base_dir or Path(__file__).resolve().parent.parent
         self.data_dir = self.base_dir / "data"
         self.playlist_dir = self.data_dir / "playlists"
         self.bumper_dir = self.data_dir / "bumpers"
@@ -89,6 +87,11 @@ class FolderSource:
                 "-bufsize", "6000k", "-g", "50",
                 "-c:a", "aac", "-b:a", "128k", "-ar", "48000",
             ]
+        elif strategy == "copy_video":
+            cmd += [
+                "-c:v", "copy",
+                "-c:a", "aac", "-b:a", "128k", "-ar", "48000",
+            ]
         else:  # auto
             cmd += ["-c", "copy"]
 
@@ -100,11 +103,10 @@ class FolderSource:
         elif output == "hls":
             hls_dir = self.data_dir / "hls" / str(c["id"])
             hls_dir.mkdir(parents=True, exist_ok=True)
-            target = hls_dir / "index.m3u8"
             cmd += [
                 "-f", "hls", "-hls_time", "4", "-hls_list_size", "6",
                 "-hls_flags", "delete_segments+append_list+omit_endlist",
                 "-hls_segment_filename", str(hls_dir / "seg_%05d.ts"),
-                str(target),
+                str(hls_dir / "index.m3u8"),
             ]
         return cmd
