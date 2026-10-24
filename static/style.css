@@ -118,3 +118,134 @@ textarea {
 .checkbox-label input[type="checkbox"] {
   width: auto; margin-top: 0.2rem; flex-shrink: 0;
 }
+/* ---- channel cards (v2) ---- */
+.section-head {
+  display: flex; justify-content: space-between; align-items: baseline;
+  flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.6rem;
+}
+.section-head h2 { margin: 0; }
+
+.channel-card {
+  border: 1px solid #e6ecf0;
+  border-radius: 8px;
+  padding: 0.9rem 1rem;
+  margin-bottom: 0.75rem;
+  background: #fff;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+.channel-card.running {
+  border-left: 4px solid #2ecc71;
+  padding-left: calc(1rem - 4px);
+}
+.channel-card.stale {
+  border-left-color: #d78b1a;
+  background: #fffbf3;
+}
+.channel-card:hover {
+  box-shadow: 0 2px 8px rgba(0,0,0,.06);
+}
+
+.channel-header {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  gap: 1rem; flex-wrap: wrap; margin-bottom: 0.6rem;
+}
+.channel-title-row {
+  display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
+  min-width: 0;
+}
+.channel-name { font-size: 1.05rem; word-break: break-word; }
+.channel-icon { font-size: 1.2rem; line-height: 1; flex-shrink: 0; }
+.channel-actions { display: flex; gap: 0.4rem; flex-shrink: 0; }
+
+.channel-stats {
+  display: grid; grid-template-columns: 1fr; gap: 0.15rem;
+  font-size: 0.88rem; margin-bottom: 0.7rem;
+}
+.channel-stats > div {
+  display: flex; gap: 0.5rem; align-items: baseline;
+  padding: 0.1rem 0; min-width: 0;
+}
+.stat-label {
+  color: #6a7a86; flex-shrink: 0; min-width: 5.5rem;
+}
+.stat-value { word-break: break-word; min-width: 0; }
+.stat-value code { font-size: 0.85rem; color: #4a5b68; }
+.stat-error .stat-value.err { color: #b23b3b; }
+
+.channel-footer {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 1rem; flex-wrap: wrap;
+  padding-top: 0.6rem; border-top: 1px dashed #e6ecf0;
+}
+.channel-outputs {
+  display: flex; gap: 0.4rem; flex-wrap: wrap; font-size: 0.8rem;
+}
+.out-badge {
+  background: #eef3f6; color: #4a5b68;
+  padding: 0.15rem 0.5rem; border-radius: 6px; font-weight: 600;
+}
+.out-badge code {
+  font-size: 0.78rem; background: transparent; padding: 0; color: #2d6fa8;
+}
+.channel-links {
+  display: flex; gap: 0.5rem; flex-wrap: wrap; font-size: 0.85rem;
+}
+.btn-link {
+  background: none; border: 1px solid #c8d3da; border-radius: 6px;
+  padding: 0.25rem 0.6rem; color: #2d6fa8;
+  text-decoration: none; cursor: pointer;
+  font-size: 0.82rem; font-family: inherit; font-weight: 500;
+  transition: background .12s;
+}
+.btn-link:hover { background: #eaf3fb; }
+.btn-link.copied {
+  background: #d4f0dd; color: #2d8a4a; border-color: #2d8a4a;
+}
+.badge-warn {
+  background: #fff4e0; color: #8f5b13;
+  border: 1px solid #f0c97c;
+}
+/* ---- events page ---- */
+.events { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+.events th, .events td { padding: 0.4rem 0.5rem; border-bottom: 1px solid #e6ecf0; vertical-align: top; }
+.events th { background: #eef3f6; }
+.events .muted.small { font-size: 0.82rem; }
+
+.lvl {
+  display: inline-block; font-size: 0.72rem; font-weight: 700;
+  padding: 0.1rem 0.5rem; border-radius: 10px;
+  letter-spacing: 0.04em;
+}
+.lvl-info  { background: #eaf3fb; color: #245b8a; }
+.lvl-warn  { background: #fff4e0; color: #8f5b13; }
+.lvl-error { background: #fdecec; color: #8f2e2e; }
+.lvl-debug { background: #eef3f6; color: #4a5b68; }
+
+.events .level-error td { color: #8f2e2e; }
+.events .level-warn td  { color: #8f5b13; }
+
+.event-extra { margin-top: 0.2rem; }
+.event-extra summary {
+  cursor: pointer; color: #2d6fa8; font-size: 0.82rem;
+}
+.event-extra pre {
+  margin: 0.3rem 0 0; padding: 0.4rem 0.6rem;
+  background: #f4f6f8; border-radius: 6px;
+  font-size: 0.8rem; overflow-x: auto; white-space: pre-wrap;
+  color: #1c2b36;
+}
+.btn-edit {
+  display: inline-block;
+  background: #2d6fa8; color: #fff;
+  border: 0; padding: 0.55rem 1rem; border-radius: 6px;
+  text-decoration: none; cursor: pointer;
+  font-size: inherit; font-family: inherit; font-weight: 500;
+  transition: background .12s;
+}
+.btn-edit:hover { background: #245b8a; color: #fff; }
+
+.form-actions {
+  display: flex; align-items: center; gap: 0.8rem;
+  margin: 1rem 0 2rem;
+}
+.form-actions .btn-start { font-size: 1rem; padding: 0.6rem 1.4rem; }

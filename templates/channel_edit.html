@@ -1,0 +1,150 @@
+{% extends "base.html" %}
+{% block title %}Изменить «{{ channel.name }}» — {{ title }}{% endblock %}
+{% block content %}
+<div class="section-head">
+  <h1>✎ Изменить канал</h1>
+  <a href="{{ url_for('channels_page') }}" class="muted small">← к списку каналов</a>
+</div>
+
+<div class="channel-card {{ 'running' if channel.running else '' }}" style="margin-bottom:1rem">
+  <div class="channel-title-row">
+    <span class="channel-icon">
+      {% if channel.source_type == 'folder' %}📁
+      {% elif channel.source_type == 'iptv' %}📡
+      {% elif channel.source_type == 'camera' %}📹
+      {% elif channel.source_type == 'dvb' %}🛰️
+      {% endif %}
+    </span>
+    <strong class="channel-name">{{ channel.name }}</strong>
+    <span class="badge {{ 'live' if channel.running else 'off' }}">
+      {{ 'LIVE' if channel.running else 'OFFLINE' }}
+    </span>
+    <span class="badge badge-type">{{ channel.source_type }}</span>
+  </div>
+  <p class="muted small" style="margin:.5rem 0 0">
+    {% if channel.running %}
+      ⚠ Канал сейчас в эфире. После сохранения он будет автоматически
+      <strong>перезапущен</strong> с новыми параметрами.
+    {% else %}
+      Канал не запущен. Изменения вступят в силу при следующем старте.
+    {% endif %}
+  </p>
+</div>
+
+<form method="post" action="{{ url_for('channels_edit', cid=channel.id) }}">
+  <section class="card">
+    <h2>Основное</h2>
+    <label>Название канала
+      <input name="name" required value="{{ channel.name }}">
+    </label>
+
+    {% if channel.source_type == 'folder' %}
+      <label>Папка с видео
+        <input name="folder" required value="{{ channel.folder }}">
+      </label>
+
+      <fieldset>
+        <legend>Ротация файлов</legend>
+        <label>Алгоритм
+          <select name="rotation">
+            <option value="random" {% if channel.rotation == 'random' %}selected{% endif %}>случайно</option>
+            <option value="mtime_asc" {% if channel.rotation == 'mtime_asc' %}selected{% endif %}>по дате изменения (старые → новые)</option>
+            <option value="mtime_desc" {% if channel.rotation == 'mtime_desc' %}selected{% endif %}>по дате изменения (новые → старые)</option>
+            <option value="name" {% if channel.rotation == 'name' %}selected{% endif %}>по имени (A → Z)</option>
+          </select>
+        </label>
+        <label class="checkbox-label">
+          <input type="checkbox" name="reshuffle_on_loop"
+                 {% if channel.reshuffle_on_loop %}checked{% endif %}>
+          <span>перемешивать при каждом цикле</span>
+        </label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Анонс следующего файла (bumper)</legend>
+        <label class="checkbox-label">
+          <input type="checkbox" name="bumper_enabled"
+                 {% if channel.bumper_enabled %}checked{% endif %}>
+          <span>показывать bumper перед каждым файлом</span>
+        </label>
+        <label>Длительность bumper, сек
+          <input name="bumper_duration_sec" type="number" min="2" max="15"
+                 value="{{ channel.bumper_duration_sec }}">
+        </label>
+      </fieldset>
+
+    {% elif channel.source_type in ('iptv', 'camera') %}
+      <label>URL потока
+        <input name="stream_url" required value="{{ channel.stream_url or '' }}">
+      </label>
+      <label>Логин (если не в URL)
+        <input name="stream_user" autocomplete="off"
+               value="{{ channel.stream_user or '' }}">
+      </label>
+      <label>Пароль (если не в URL)
+        <input name="stream_pass" type="password" autocomplete="new-password"
+               placeholder="{% if channel.stream_pass %}•••••• — оставьте пустым, чтобы не менять{% else %}оставьте пустым, если в URL{% endif %}">
+      </label>
+      <p class="muted small" style="margin:.3rem 0 0">
+        Пароль показан только как маска — если не меняете, оставьте поле пустым.
+      </p>
+
+    {% else %}
+      <p class="muted">
+        Редактирование каналов типа <code>{{ channel.source_type }}</code>
+        пока не поддерживается через UI. Используйте API.
+      </p>
+    {% endif %}
+  </section>
+
+  {% if channel.source_type in ('folder', 'iptv', 'camera') %}
+  <section class="card">
+    <h2>Кодеки и выходы</h2>
+
+    <fieldset>
+      <legend>Кодеки</legend>
+      <label>Стратегия
+        <select name="codec_strategy">
+          <option value="auto" {% if channel.codec_strategy == 'auto' %}selected{% endif %}>
+            auto{% if channel.source_type == 'folder' %} (copy → encode при ошибке){% else %} (для iptv = copy, для камеры = encode){% endif %}
+          </option>
+          <option value="copy" {% if channel.codec_strategy == 'copy' %}selected{% endif %}>copy — без перекодирования (быстро)</option>
+          <option value="encode" {% if channel.codec_strategy == 'encode' %}selected{% endif %}>encode — перекодировать (совместимо с любым браузером)</option>
+        </select>
+      </label>
+      {% if channel.source_type == 'folder' %}
+        <label>Расширения файлов
+          <input name="file_extensions" value="{{ channel.file_extensions }}">
+        </label>
+      {% endif %}
+    </fieldset>
+
+    <fieldset>
+      <legend>Выходы</legend>
+      <label class="checkbox-label">
+        <input type="checkbox" name="hls_enabled"
+               {% if channel.hls_enabled %}checked{% endif %}>
+        <span>HLS (веб-плеер, мобильные, ТВ)</span>
+      </label>
+      <label class="checkbox-label">
+        <input type="checkbox" name="multicast_enabled"
+               {% if channel.multicast_enabled %}checked{% endif %}>
+        <span>Multicast UDP (VLC, Kodi, приставки)</span>
+      </label>
+      <label>Multicast адрес
+        <input name="multicast_addr" value="{{ channel.multicast_addr or '239.1.1.1' }}">
+      </label>
+      <label>Multicast порт
+        <input name="multicast_port" type="number" min="1024" max="65535"
+               value="{{ channel.multicast_port or 5000 }}">
+      </label>
+    </fieldset>
+  </section>
+  {% endif %}
+
+  <div class="form-actions">
+    <button type="submit" class="btn-start">Сохранить</button>
+    <a href="{{ url_for('channels_page') }}" class="btn-link">Отмена</a>
+  </div>
+</form>
+{% endblock %}

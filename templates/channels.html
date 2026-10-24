@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Локальные каналы — {{ title }}{% endblock %}
+{% block title %}Каналы — {{ title }}{% endblock %}
 {% block content %}
 <h1>Каналы</h1>
 
@@ -11,88 +11,159 @@
 </div>
 {% endif %}
 
-{# ============================================================ #}
-{#  СПИСОК КАНАЛОВ                                              #}
-{# ============================================================ #}
+{# ===== СПИСОК КАНАЛОВ ===== #}
 <section class="card">
-  <h2>Список каналов {% if channels %}({{ channels|length }}){% endif %}</h2>
+  <div class="section-head">
+    <h2>Список каналов {% if channels %}({{ channels|length }}){% endif %}</h2>
+    {% if channels %}
+      {% set live_count = channels|selectattr('running')|list|length %}
+      <span class="muted small">в эфире: {{ live_count }} из {{ channels|length }}</span>
+    {% endif %}
+  </div>
+
   {% if channels %}
     {% for ch in channels %}
-      <div class="channel-row {{ 'running' if ch.running else 'stopped' }}">
-        <div class="channel-main">
-          <div class="channel-title-line">
-            {% if ch.source_type == 'folder' %}
-              <span class="channel-icon" title="Папка">📁</span>
-            {% elif ch.source_type == 'iptv' %}
-              <span class="channel-icon" title="IPTV">📡</span>
-            {% elif ch.source_type == 'camera' %}
-              <span class="channel-icon" title="Камера">📹</span>
-            {% elif ch.source_type == 'dvb' %}
-              <span class="channel-icon" title="DVB">🛰️</span>
-            {% endif %}
-            <strong>{{ ch.name }}</strong>
+      <div class="channel-card {{ 'running' if ch.running else 'stopped' }}{% if ch.is_stale %} stale{% endif %}">
+        <div class="channel-header">
+          <div class="channel-title-row">
+            <span class="channel-icon" title="{{ ch.source_type }}">
+              {% if ch.source_type == 'folder' %}📁
+              {% elif ch.source_type == 'iptv' %}📡
+              {% elif ch.source_type == 'camera' %}📹
+              {% elif ch.source_type == 'dvb' %}🛰️
+              {% else %}❓{% endif %}
+            </span>
+            <strong class="channel-name">{{ ch.name }}</strong>
             <span class="badge {{ 'live' if ch.running else 'off' }}">
               {{ 'LIVE' if ch.running else 'OFFLINE' }}
             </span>
             <span class="badge badge-type">{{ ch.source_type }}</span>
+            {% if ch.is_stale %}
+              <span class="badge badge-warn"
+                    title="HLS-сегмент не обновлялся {{ ch.stale_human }}">
+                ⚠ нет сигнала {{ ch.stale_human }}
+              </span>
+            {% endif %}
+          </div>
+                    <div class="channel-actions">
+            {% if ch.running %}
+              <form method="post" action="{{ url_for('channels_stop', cid=ch.id) }}">
+                <button type="submit" class="btn-stop">Стоп</button>
+              </form>
+            {% else %}
+              <form method="post" action="{{ url_for('channels_start', cid=ch.id) }}">
+                <button type="submit" class="btn-start">Старт</button>
+              </form>
+            {% endif %}
+            <a href="{{ url_for('channel_edit_form', cid=ch.id) }}"
+               class="btn-edit" title="Изменить параметры канала">✎ Изменить</a>
+            <form method="post" action="{{ url_for('channels_delete', cid=ch.id) }}"
+                  onsubmit="return confirm('Удалить канал «{{ ch.name }}»?')">
+              <button type="submit" class="btn-danger">Удалить</button>
+            </form>
+          </div>
+        </div>
+
+        <div class="channel-stats">
+          {% if ch.running and ch.current_file %}
+            <div>
+              <span class="stat-label">Сейчас:</span>
+              <span class="stat-value">{{ ch.current_file }}
+                {% if ch.position_sec %}<span class="muted">· {{ ch.position_sec }} с</span>{% endif %}
+              </span>
+            </div>
+          {% elif ch.running and ch.source_type == 'iptv' %}
+            <div>
+              <span class="stat-label">Сейчас:</span>
+              <span class="stat-value">IPTV-поток транслируется</span>
+            </div>
+          {% elif ch.running and ch.source_type == 'camera' %}
+            <div>
+              <span class="stat-label">Сейчас:</span>
+              <span class="stat-value">камера транслируется</span>
+            </div>
+          {% endif %}
+
+          {% if ch.uptime_human %}
+            <div>
+              <span class="stat-label">В эфире:</span>
+              <span class="stat-value">{{ ch.uptime_human }}{% if ch.started_at_local %} <span class="muted">(с {{ ch.started_at_local }})</span>{% endif %}</span>
+            </div>
+          {% endif %}
+
+          {% if ch.source_type == 'folder' %}
+            <div>
+              <span class="stat-label">Папка:</span>
+              <span class="stat-value"><code>{{ ch.folder }}</code>
+                {% if ch.folder_files %}
+                  <span class="muted">· {{ ch.folder_files }} файл(ов) · {{ ch.folder_size }}</span>
+                {% endif %}
+              </span>
+            </div>
+            <div>
+              <span class="stat-label">Ротация:</span>
+              <span class="stat-value">{{ ch.rotation }}{% if ch.reshuffle_on_loop %} +reshuffle{% endif %}</span>
+            </div>
+          {% elif ch.source_type == 'iptv' or ch.source_type == 'camera' %}
+            <div>
+              <span class="stat-label">Источник:</span>
+              <span class="stat-value"><code>{{ ch.stream_url }}</code></span>
+            </div>
+          {% endif %}
+
+          <div>
+            <span class="stat-label">Кодек:</span>
+            <span class="stat-value">{{ ch.codec_strategy }}</span>
           </div>
 
-          {% if ch.running and ch.current_file %}
-            <div class="muted small">
-              сейчас: {{ ch.current_file }}
-              {% if ch.position_sec %}· {{ ch.position_sec }}s{% endif %}
+          {% if ch.bumper_enabled and ch.source_type == 'folder' %}
+            <div>
+              <span class="stat-label">Bumper:</span>
+              <span class="stat-value">{{ ch.bumper_duration_sec }} с</span>
             </div>
           {% endif %}
 
           {% if ch.error %}
-            <div class="err small">ошибка: {{ ch.error }}</div>
+            <div class="stat-error">
+              <span class="stat-label">Ошибка:</span>
+              <span class="stat-value err">{{ ch.error }}</span>
+            </div>
           {% endif %}
-
-          <div class="muted small channel-meta">
-            {% if ch.source_type == 'folder' %}
-              📁 <code>{{ ch.folder }}</code> ·
-              ротация: {{ ch.rotation }}{% if ch.reshuffle_on_loop %} +reshuffle{% endif %} ·
-            {% elif ch.source_type == 'iptv' %}
-              📡 <code>{{ ch.stream_url }}</code> ·
-            {% elif ch.source_type == 'camera' %}
-              📹 <code>{{ ch.stream_url }}</code> ·
-            {% endif %}
-
-            кодек: {{ ch.codec_strategy }} ·
-            {% if ch.hls_enabled %}HLS{% endif %}
-            {% if ch.multicast_enabled %}
-              {% if ch.hls_enabled %}·{% endif %}
-              udp://{{ ch.multicast_addr }}:{{ ch.multicast_port }}
-            {% endif %}
-            {% if ch.bumper_enabled and ch.source_type == 'folder' %}
-              · bumper {{ ch.bumper_duration_sec }}s
-            {% endif %}
-          </div>
-
-          <div class="muted small" style="margin-top:.3rem">
-            <a href="{{ viewer_url }}watch/{{ ch.id }}" target="_blank" rel="noopener">
-              ▶ смотреть в viewer
-            </a>
-          </div>
         </div>
 
-        <div class="channel-actions">
-          {% if ch.running %}
-            <form method="post"
-                  action="{{ url_for('channels_stop', cid=ch.id) }}">
-              <button type="submit" class="btn-stop">Стоп</button>
-            </form>
-          {% else %}
-            <form method="post"
-                  action="{{ url_for('channels_start', cid=ch.id) }}">
-              <button type="submit" class="btn-start">Старт</button>
-            </form>
-          {% endif %}
-          <form method="post"
-                action="{{ url_for('channels_delete', cid=ch.id) }}"
-                onsubmit="return confirm('Удалить канал «{{ ch.name }}»?')">
-            <button type="submit" class="btn-danger">Удалить</button>
-          </form>
+        <div class="channel-footer">
+          <div class="channel-outputs">
+            {% if ch.hls_enabled %}
+              <span class="out-badge" title="HLS включён">HLS</span>
+            {% endif %}
+            {% if ch.multicast_enabled %}
+              <span class="out-badge" title="Multicast включён">
+                UDP <code>{{ ch.multicast_addr }}:{{ ch.multicast_port }}</code>
+              </span>
+            {% endif %}
+          </div>
+          <div class="channel-links">
+            {% if ch.running and ch.hls_enabled %}
+              <a href="{{ viewer_url }}watch/{{ ch.id }}"
+                 target="_blank" rel="noopener" class="btn-link">
+                ▶ смотреть в viewer
+              </a>
+            {% endif %}
+            {% if ch.hls_enabled %}
+              <button type="button" class="btn-link btn-copy"
+                      data-copy="{{ viewer_url }}hls/{{ ch.id }}/index.m3u8"
+                      title="Скопировать HLS-URL для VLC (с порта viewer)">
+                📋 HLS
+              </button>
+            {% endif %}
+            {% if ch.multicast_url %}
+              <button type="button" class="btn-link btn-copy"
+                      data-copy="{{ ch.multicast_url }}"
+                      title="Скопировать multicast-URL для VLC">
+                📋 UDP
+              </button>
+            {% endif %}
+          </div>
         </div>
       </div>
     {% endfor %}
@@ -101,15 +172,12 @@
   {% endif %}
 </section>
 
-{# ============================================================ #}
-{#  СОЗДАТЬ КАНАЛ ИЗ ПАПКИ                                      #}
-{# ============================================================ #}
+{# ===== СОЗДАТЬ ИЗ ПАПКИ ===== #}
 <section class="card">
   <h2>📁 Создать канал из папки</h2>
   <p class="muted small">
     Сервер соберёт все видеофайлы из папки, отсортирует по выбранному
-    алгоритму и будет крутить их по кругу. Одна папка — один канал;
-    повторное использование пути запрещено.
+    алгоритму и будет крутить их по кругу. Одна папка — один канал.
   </p>
   <form method="post" action="{{ url_for('channels_create') }}">
     <label>Название канала
@@ -133,8 +201,7 @@
       <label class="checkbox-label">
         <input type="checkbox" name="reshuffle_on_loop">
         <span>перемешивать при каждом цикле
-          <span class="muted small">— пауза 1–3 сек между циклами (ffmpeg
-          перезапускается)</span></span>
+          <span class="muted small">— пауза 1–3 сек между циклами</span></span>
       </label>
     </fieldset>
 
@@ -153,7 +220,7 @@
     </fieldset>
 
     <fieldset>
-      <legend>Анонс следующего файла (bumper)</legend>
+      <legend>Анонс следующего файла</legend>
       <label class="checkbox-label">
         <input type="checkbox" name="bumper_enabled" checked>
         <span>показывать 5-секундный bumper перед каждым файлом</span>
@@ -171,7 +238,7 @@
       </label>
       <label class="checkbox-label">
         <input type="checkbox" name="multicast_enabled">
-        <span>Multicast UDP (VLC, Kodi, приставки в LAN)</span>
+        <span>Multicast UDP (VLC, Kodi, приставки)</span>
       </label>
       <label>Multicast адрес
         <input name="multicast_addr" value="239.1.1.1">
@@ -185,19 +252,16 @@
   </form>
 </section>
 
-{# ============================================================ #}
-{#  СОЗДАТЬ IPTV-КАНАЛ ИЗ ПЛЕЙЛИСТА                              #}
-{# ============================================================ #}
+{# ===== IPTV ИЗ ПЛЕЙЛИСТА ===== #}
 <section class="card">
   <h2>📡 IPTV из плейлиста провайдера</h2>
   <p class="muted small">
-    Вставьте URL M3U/M3U8-плейлиста (или загрузите файл). Сервер распарсит
-    его и покажет список каналов — вы отметите нужные, и они станут
-    отдельными каналами. Дубли по URL автоматически пропускаются.
+    Вставьте URL M3U/M3U8-плейлиста или загрузите файл. Сервер покажет
+    список каналов — вы отметите нужные, они станут отдельными каналами.
   </p>
   <form method="post" action="{{ url_for('channels_iptv_import') }}"
         enctype="multipart/form-data">
-    <label>URL плейлиста (http/https)
+    <label>URL плейлиста
       <input name="url" placeholder="http://provider.example/playlist.m3u">
     </label>
     <label>…или загрузите файл
@@ -205,25 +269,17 @@
     </label>
     <button type="submit">Загрузить и выбрать каналы</button>
   </form>
-  <p class="muted small" style="margin-top:.6rem">
-    Провайдер даёт плейлист в личном кабинете. Если плейлист требует
-    авторизации по URL-параметрам — вставьте полный URL, как он выдан.
-  </p>
 </section>
 
-{# ============================================================ #}
-{#  СОЗДАТЬ КАНАЛ-КАМЕРУ                                        #}
-{# ============================================================ #}
+{# ===== КАМЕРА ===== #}
 <section class="card">
   <h2>📹 Видеокамера / прямой поток</h2>
   <p class="muted small">
     RTSP, HLS, HTTP — одиночный live-источник. Для RTSP используется
-    TCP-транспорт. Стратегия <code>auto</code> для камеры = <code>encode</code>
-    (большинство камер отдают H.265/G.711, браузеры это не проигрывают).
+    TCP-транспорт. <code>auto</code> для камеры = <code>encode</code>.
   </p>
   <form method="post" action="{{ url_for('channels_create_stream') }}">
     <input type="hidden" name="source_type" value="camera">
-
     <label>Название канала
       <input name="name" required placeholder="Двор, Подъезд, Дача…">
     </label>
@@ -232,8 +288,7 @@
              placeholder="rtsp://user:pass@192.168.1.10:554/Streaming/Channels/101">
     </label>
     <label>Логин (если не в URL)
-      <input name="stream_user" autocomplete="off"
-             placeholder="оставьте пустым, если в URL">
+      <input name="stream_user" autocomplete="off" placeholder="оставьте пустым, если в URL">
     </label>
     <label>Пароль (если не в URL)
       <input name="stream_pass" type="password" autocomplete="new-password"
@@ -245,7 +300,7 @@
       <label>Стратегия
         <select name="codec_strategy">
           <option value="auto">auto (для камеры = encode)</option>
-          <option value="encode">encode — совместимо с любым браузером (больше CPU)</option>
+          <option value="encode">encode — совместимо с браузером (больше CPU)</option>
           <option value="copy">copy — быстро, если камера уже H.264+AAC</option>
         </select>
       </label>
@@ -273,30 +328,42 @@
   </form>
 </section>
 
-{# ============================================================ #}
-{#  ПОДСКАЗКИ                                                    #}
-{# ============================================================ #}
+{# ===== ПОДСКАЗКИ ===== #}
 <section class="card">
   <h2>Подсказки</h2>
   <ul class="muted small">
-    <li><strong>HLS</strong> — для браузеров и мобильных устройств
-      в той же Wi-Fi. Открывайте viewer на порту
-      <code>{{ viewer_port }}</code>.</li>
+    <li><strong>HLS</strong> — для браузеров и мобильных в домашней Wi-Fi.
+      Viewer на порту <code>{{ viewer_port }}</code>.</li>
     <li><strong>Multicast UDP</strong> — для VLC/Kodi/приставок.
-      Адрес вида <code>udp://@239.1.1.1:5000</code>. Работает только
-      в пределах локальной сети (IGMP snooping должен быть настроен на
-      свитче, если используется управляемый коммутатор).</li>
+      Адрес <code>udp://@239.1.1.1:5000</code>. Работает в локальной сети.</li>
     <li><strong>Задержка</strong>: HLS — 8–15 сек, multicast — 1–2 сек.
-      Для «посмотреть двор в реальном времени» включайте multicast
-      и смотрите в VLC.</li>
-    <li><strong>Auto-restart</strong>: если IPTV-поток или камера
-      отвалилась, супервизор перезапускает ffmpeg через 3 секунды.
-      Для каналов из папок такого рестарта нет — падение будет видно
-      как <code>OFFLINE</code> и ошибка в <code>/events</code>.</li>
-    <li><strong>Bumper</strong> (анонс следующего файла) работает только
-      для каналов из папок — у потоков «следующего файла» нет.</li>
-    <li><strong>Дубли</strong> папок и URL блокируются: одна папка = один
-      канал, один URL = один канал.</li>
+      Для «посмотреть двор в реальном времени» — multicast в VLC.</li>
+    <li><strong>Auto-restart</strong>: IPTV и камеры перезапускаются через 3 сек
+      после падения. Папки — нет (падение = ошибка в файлах, надо вмешаться).</li>
+    <li><strong>⚠ нет сигнала</strong> в карточке — HLS-сегмент не обновлялся
+      больше 30 секунд. Поток «залип», проверьте <code>/events</code>.</li>
+    <li><strong>📋 HLS / 📋 UDP</strong> — копируют ссылку для вставки
+      в VLC или на ТВ-приставке.</li>
   </ul>
 </section>
+
+<script>
+document.querySelectorAll('.btn-copy').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    const text = btn.dataset.copy;
+    try {
+      await navigator.clipboard.writeText(text);
+      const original = btn.textContent;
+      btn.textContent = '✓ скопировано';
+      btn.classList.add('copied');
+      setTimeout(() => {
+        btn.textContent = original;
+        btn.classList.remove('copied');
+      }, 1500);
+    } catch (e) {
+      prompt('Скопируйте вручную:', text);
+    }
+  });
+});
+</script>
 {% endblock %}

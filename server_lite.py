@@ -19,6 +19,7 @@ from flask import (
 )
 
 from auth import auth_bp, current_user, hash_password, login_required
+from channel_utils import enrich_channel
 from config import config
 from db import (
     create_channel, delete_channel, find_channels_by_folder,
@@ -50,7 +51,8 @@ def _to_bool(value) -> bool:
 
 def _channel_view(ch: dict) -> dict:
     st = supervisor.get_state(ch["id"])
-    return {**ch, **st, "running": bool(st.get("running"))}
+    base = {**ch, **st, "running": bool(st.get("running"))}
+    return enrich_channel(base)
 
 
 def _validate_channel_payload(data: dict, exclude_id: int | None = None) -> str | None:
@@ -333,7 +335,13 @@ def create_lite_app() -> Flask:
               + (f", пропущено {skipped}" if skipped else ""),
               "info" if created else "warn")
         return redirect(url_for("channels_page"))
-
+    @app.route("/channels/<int:cid>/edit", methods=["GET"])
+    @login_required
+    def channel_edit_form(cid):
+        ch = get_channel(cid)
+        if not ch:
+            abort(404)
+        return render_template("channel_edit.html", channel=_channel_view(ch))
     @app.route("/channels/<int:cid>/edit", methods=["POST"])
     @login_required
     def channels_edit(cid):
@@ -419,6 +427,14 @@ def create_lite_app() -> Flask:
     def events_page():
         limit = int(request.args.get("limit", 200))
         return render_template("events.html", events=events.read_tail(limit))
+
+    @app.route("/events/clear", methods=["POST"])
+    @login_required
+    def events_clear():
+        by = (current_user() or {}).get("username")
+        removed = events.clear(by=by)
+        flash(f"Журнал очищен (удалено {removed} записей)", "info")
+        return redirect(url_for("events_page"))
 
     # ---------- about ----------
     @app.route("/about")
