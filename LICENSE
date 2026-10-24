@@ -1,0 +1,39 @@
+Copyright (c) 2026 Andrew Genben
+
+
+
+Настоящим любому лицу, получившему копию данного программного обеспечения и связанных с ним файлов документации (далее — «Программное обеспечение»), предоставляется бесплатное разрешение использовать, копировать, изменять, объединять, публиковать, распространять и сублицензировать Программное обеспечение при соблюдении условий, указанных ниже. Право продавать Программное обеспечение или любые его копии и производные работы настоящим не предоставляется и прямо запрещается.
+1. Условия распространения и указание авторства.
+При любом распространении Программного обеспечения или производных работ — в исходном или бинарном виде, изменённом или неизменённом, отдельно или в составе другого продукта — вы обязаны:
+(a) сохранять указанное выше уведомление об авторских правах и полный текст настоящей лицензии во всех копиях или существенных частях Программного обеспечения;
+(b) явно указывать автора проекта: Andrew Genben;
+(c) давать ссылку на оригинальный проект: [URL проекта] или иную официальную страницу проекта, указанную автором;
+(d) если вы распространяете изменённую версию, явно отмечать, что она изменена, и не создавать впечатления, что изменения одобрены автором.
+2. Запрет продажи.
+Вы не вправе продавать, перепродавать или иным образом передавать за плату Программное обеспечение, его копии или производные работы, включая распространение, единственной или основной целью которого является получение платы именно за Программное обеспечение или его копию. Этот запрет не ограничивает бесплатное распространение и не запрещает использовать Программное обеспечение для собственных нужд или в составе иных работ, если это не является продажей самого Программного обеспечения.
+3. Сублицензирование.
+Вы можете сублицензировать права, предоставленные настоящей лицензией, только на условиях настоящей лицензии и с обязательным сохранением всех ограничений, включая запрет продажи и требование указания авторства.
+4. Отказ от гарантий.
+ПРОГРАММНОЕ ОБЕСПЕЧЕНИЕ ПРЕДОСТАВЛЯЕТСЯ «КАК ЕСТЬ», БЕЗ КАКИХ-ЛИБО ГАРАНТИЙ, ЯВНЫХ ИЛИ ПОДРАЗУМЕВАЕМЫХ, ВКЛЮЧАЯ, ПОМИМО ПРОЧЕГО, ГАРАНТИИ ТОВАРНОЙ ПРИГОДНОСТИ, СООТВЕТСТВИЯ ОПРЕДЕЛЕННОЙ ЦЕЛИ И ОТСУТСТВИЯ НАРУШЕНИЙ ПРАВ.
+5. Ограничение ответственности.
+НИ В КАКОМ СЛУЧАЕ АВТОРЫ ИЛИ ПРАВООБЛАДАТЕЛИ НЕ НЕСУТ ОТВЕТСТВЕННОСТИ ПО КАКИМ-ЛИБО ИСКАМ, УЩЕРБУ ИЛИ ИНОЙ ОТВЕТСТВЕННОСТИ, БУДЬ ТО В РАМКАХ ДОГОВОРА, ДЕЛИКТА ИЛИ ИНЫМ ОБРАЗОМ, ВОЗНИКАЮЩИМ ИЗ ПРОГРАММНОГО ОБЕСПЕЧЕНИЯ, В СВЯЗИ С НИМ ИЛИ В РЕЗУЛЬТАТЕ ЕГО ИСПОЛЬЗОВАНИЯ ИЛИ ИНЫХ ДЕЙСТВИЙ С ПРОГРАММНЫМ ОБЕСПЕЧЕНИЕМ.
+6. Прекращение.
+Нарушение условий настоящей лицензии прекращает предоставленные вам права. Лица, получившие Программное обеспечение от вас с соблюдением условий, сохраняют свои права при условии соблюдения настоящей лицензии.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to use, copy, modify, merge, publish, distribute, and sublicense the Software, subject to the conditions below. The right to sell the Software or any copies or derivative works is not granted and is expressly prohibited.
+1. Distribution and Attribution Conditions.
+Any distribution of the Software or derivative works — in source or binary form, modified or unmodified, alone or as part of another product — must:
+(a) retain the above copyright notice and the full text of this license in all copies or substantial portions of the Software;
+(b) clearly credit the project author: Andrew Genben;
+(c) include a link to the original project: [PROJECT URL] or another official project page designated by the author;
+(d) if you distribute a modified version, clearly indicate that it has been modified and not imply that the changes are endorsed by the author.
+2. No Sale.
+You may not sell, resell, or otherwise transfer for payment the Software, its copies, or derivative works, including distribution whose sole or primary purpose is to charge specifically for the Software or a copy of it. This prohibition does not restrict free distribution and does not prohibit using the Software for your own purposes or as part of other works, provided this is not a sale of the Software itself.
+3. Sublicensing.
+You may sublicense the rights granted under this license only under the terms of this license and must preserve all restrictions, including the no-sale prohibition and attribution requirement.
+4. Disclaimer of Warranty.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+5. Limitation of Liability.
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+6. Termination.
+Violation of the terms of this license terminates the rights granted to you. Recipients who receive the Software from you in compliance with the conditions retain their rights as long as they comply with this license.

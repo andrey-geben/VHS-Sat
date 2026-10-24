@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Адаптеры — LNB / DiSEqC</h1>
+
+{% if not tools['dvb-fe-tool'] %}
+<div class="flash flash-warn">
+  ⚠️ <code>dvb-fe-tool</code> не найден в PATH — применение LNB к железу
+  недоступно. Установите: <code>apt install dvb-tools</code>.
+</div>
+{% endif %}
+
+{% for a in adapters %}
+<div class="card">
+  <h2>{{ a.id }} — {{ a.name }}</h2>
+  <p class="muted">
+    {{ a.device }} / frontend{{ a.frontend }} ·
+    capabilities: {{ a.capabilities|join(', ') or '—' }} ·
+    lock: {{ 'yes' if a.lock else 'no' }}
+  </p>
+
+  <form method="post"
+        action="{{ url_for('api_adapter_set_lnb', adapter_id=a.id) }}">
+    <fieldset>
+      <legend>LNB</legend>
+      <label>Тип
+        <select name="lnb_type">
+          {% for t in ['universal', 'c-band', 'custom'] %}
+            <option value="{{ t }}"
+              {% if a.lnb.type == t %}selected{% endif %}>{{ t }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Low LO (MHz)
+        <input name="lnb_low" type="number" min="0" step="1"
+               value="{{ a.lnb.low or 9750 }}">
+      </label>
+      <label>High LO (MHz)
+        <input name="lnb_high" type="number" min="0" step="1"
+               value="{{ a.lnb.high or 10600 }}">
+      </label>
+      <label>Питание LNB
+        <select name="lnb_voltage">
+          {% for v in ['off', '13V', '18V'] %}
+            <option value="{{ v }}"
+              {% if a.lnb.voltage|lower == v|lower %}selected{% endif %}>
+              {{ v }}
+            </option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>22 kHz тональность
+        <select name="lnb_tone">
+          {% for t in ['auto', 'on', 'off'] %}
+            <option value="{{ t }}"
+              {% if a.lnb.tone == t %}selected{% endif %}>{{ t }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </fieldset>
+
+    <fieldset>
+      <legend>DiSEqC</legend>
+      <label>Версия
+        <select name="diseqc_version">
+          {% for v in ['1.0', '1.1'] %}
+            <option value="{{ v }}"
+              {% if a.diseqc.version == v %}selected{% endif %}>{{ v }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Порт
+        <select name="diseqc_port">
+          {% for p in range(1, 17) %}
+            <option value="{{ p }}"
+              {% if a.diseqc.port == p %}selected{% endif %}>{{ p }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </fieldset>
+
+    <button type="submit">Применить</button>
+    <p class="muted small">
+      DiSEqC отправляется только при тюнинге (этап 2). Сейчас сохраняется в конфиг.
+      Voltage / 22 kHz применяются сразу через <code>dvb-fe-tool</code>.
+    </p>
+  </form>
+</div>
+{% else %}
+<div class="card">
+  <p class="muted">Адаптеры не обнаружены.
+  {% if backend_name != 'linux-dvb' %}
+    На stub-бэкенде показываются демо-адаптеры; если их нет —
+    проверьте <code>hardware/windows_stub.py</code>.
+  {% else %}
+    Проверьте наличие <code>/dev/dvb/adapter*</code>.
+  {% endif %}
+  </p>
+</div>
+{% endfor %}
+{% endblock %}

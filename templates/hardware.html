@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Оборудование</h1>
+
+<p class="muted">
+  Бэкенд: <code>{{ backend_name }}</code> · платформа: <code>{{ platform }}</code>
+</p>
+
+{% if backend_name != 'linux-dvb' %}
+<div class="flash flash-warn">
+  ⚠️ Кроссплатформенная разработка: реальное обнаружение адаптеров и CI-слотов
+  доступно только на Linux (<code>/dev/dvb/adapter*</code>). Здесь показаны
+  демо-данные stub-бэкенда.
+</div>
+{% endif %}
+
+<section class="card">
+  <h2>DVB-адаптеры</h2>
+  {% if adapters %}
+    {% for a in adapters %}
+      <details>
+        <summary><strong>{{ a.id }}</strong> — {{ a.name }}</summary>
+        <table>
+          <tr><th>device</th><td>{{ a.device }}</td></tr>
+          <tr><th>frontend</th><td>{{ a.frontend }}</td></tr>
+          <tr><th>capabilities</th><td>{{ a.capabilities or "—" }}</td></tr>
+          <tr><th>lock</th><td>{{ a.lock }}</td></tr>
+          <tr><th>LNB</th><td>{{ a.lnb }}</td></tr>
+          <tr><th>DiSEqC</th><td>{{ a.diseqc }}</td></tr>
+        </table>
+      </details>
+    {% endfor %}
+  {% else %}
+    <p class="muted">Не обнаружено.</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>CI-слоты</h2>
+  {% if ci_slots %}
+    <table>
+      <tr><th>ID</th><th>Устройство</th><th>Адаптер</th><th>CAM</th><th>Статус</th></tr>
+      {% for c in ci_slots %}
+        <tr>
+          <td>{{ c.id }}</td>
+          <td>{{ c.device }}</td>
+          <td>{{ c.adapter }}</td>
+          <td>{{ c.cam_type or "—" }}</td>
+          <td>{{ c.status }}</td>
+        </tr>
+      {% endfor %}
+    </table>
+  {% else %}
+    <p class="muted">Не обнаружено.</p>
+  {% endif %}
+</section>
+{% endblock %}

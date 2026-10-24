@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Локальные каналы (LokalChanel)</h1>
+
+{% if not tools['ffmpeg'] %}
+<div class="flash flash-error">
+  ⚠️ <code>ffmpeg</code> не найден в PATH. Локальные каналы не смогут работать.
+  Windows: <code>winget install ffmpeg</code>. Linux: <code>apt install ffmpeg</code>.
+</div>
+{% endif %}
+
+<section class="card">
+  <h2>Каналы</h2>
+  {% if channels %}
+    {% for ch in channels %}
+      <div class="channel-row {{ 'running' if ch.running else 'stopped' }}">
+        <div class="channel-main">
+          <strong>{{ ch.name }}</strong>
+          <span class="badge {{ 'live' if ch.running else 'off' }}">
+            {{ 'LIVE' if ch.running else 'OFFLINE' }}
+          </span>
+          {% if ch.running and ch.current_file %}
+            <div class="muted small">сейчас: {{ ch.current_file }}
+              {% if ch.position_sec %}· {{ ch.position_sec }}s{% endif %}</div>
+          {% endif %}
+          {% if ch.error %}
+            <div class="err small">ошибка: {{ ch.error }}</div>
+          {% endif %}
+          <div class="muted small">
+            📁 {{ ch.folder }} ·
+            ротация: {{ ch.rotation }}{% if ch.reshuffle_on_loop %} +reshuffle{% endif %} ·
+            кодек: {{ ch.codec_strategy }} ·
+            {% if ch.hls_enabled %}HLS {% endif %}
+            {% if ch.multicast_enabled %}· udp://{{ ch.multicast_addr }}:{{ ch.multicast_port }}{% endif %}
+            {% if ch.bumper_enabled %}· bumper {{ ch.bumper_duration_sec }}s{% endif %}
+          </div>
+          <div class="muted small">
+            <a href="{{ url_for('watch_player', cid=ch.id) }}">▶ смотреть в браузере</a>
+          </div>
+        </div>
+        <div class="channel-actions">
+          {% if ch.running %}
+            <form method="post" action="{{ url_for('channels_stop', cid=ch.id) }}">
+              <button type="submit" class="btn-stop">Стоп</button>
+            </form>
+          {% else %}
+            <form method="post" action="{{ url_for('channels_start', cid=ch.id) }}">
+              <button type="submit" class="btn-start">Старт</button>
+            </form>
+          {% endif %}
+          <form method="post" action="{{ url_for('channels_delete', cid=ch.id) }}"
+                onsubmit="return confirm('Удалить канал «{{ ch.name }}»?')">
+            <button type="submit" class="btn-danger">Удалить</button>
+          </form>
+        </div>
+      </div>
+    {% endfor %}
+  {% else %}
+    <p class="muted">Каналов пока нет. Создайте первый ниже.</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Создать канал</h2>
+  <form method="post" action="{{ url_for('channels_create') }}">
+    <label>Название канала
+      <input name="name" required placeholder="Детский, Музыка, Кино…">
+    </label>
+    <label>Папка с видео (полный путь)
+      <input name="folder" required placeholder="D:\Video\Cartoons  или  /mnt/video/cartoons">
+    </label>
+    <fieldset>
+      <legend>Ротация файлов</legend>
+      <label>Алгоритм
+        <select name="rotation">
+          <option value="random">случайно</option>
+          <option value="mtime_asc">по дате создания (старые → новые)</option>
+          <option value="mtime_desc">по дате создания (новые → старые)</option>
+          <option value="name">по имени (A → Z)</option>
+        </select>
+      </label>
+      <label><input type="checkbox" name="reshuffle_on_loop">
+        перемешивать при каждом цикле (перезапуск ffmpeg)</label>
+    </fieldset>
+    <fieldset>
+      <legend>Кодеки</legend>
+      <label>Стратегия
+        <select name="codec_strategy">
+          <option value="copy">copy — без перекодирования (быстро, если все файлы H.264/AAC)</option>
+          <option value="encode">encode — перекодировать всё (медленно, но совместимо)</option>
+          <option value="auto">auto — сначала copy, при сбое — encode</option>
+        </select>
+      </label>
+      <label>Расширения файлов
+        <input name="file_extensions" value="mp4,mkv,avi,ts,mov,m4v,webm">
+      </label>
+    </fieldset>
+    <fieldset>
+      <legend>Анонс следующего файла</legend>
+      <label><input type="checkbox" name="bumper_enabled" checked>
+        показывать 5-секундный bumper перед каждым файлом</label>
+      <label>Длительность bumper, сек
+        <input name="bumper_duration_sec" type="number" min="2" max="15" value="5">
+      </label>
+    </fieldset>
+    <fieldset>
+      <legend>Выходы</legend>
+      <label><input type="checkbox" name="hls_enabled" checked>
+        HLS (веб-плеер, мобильные устройства)</label>
+      <label><input type="checkbox" name="multicast_enabled">
+        Multicast UDP (VLC/Kodi/ТВ в локальной сети)</label>
+      <label>Multicast адрес
+        <input name="multicast_addr" value="239.1.1.1">
+      </label>
+      <label>Multicast порт
+        <input name="multicast_port" type="number" min="1024" max="65535" value="5000">
+      </label>
+    </fieldset>
+    <button type="submit">Создать канал</button>
+  </form>
+</section>
+{% endblock %}

@@ -1,0 +1,29 @@
+# Виртуальное окружение
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Локальная конфигурация и данные (СЕКРЕТЫ!)
+config.yaml
+data/
+logs/
+*.db
+*.sqlite3
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Сборки (для будущего .exe)
+build/
+dist/
+vendor/

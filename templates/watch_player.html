@@ -1,0 +1,101 @@
+{% extends "viewer_base.html" %}
+{% block title %}{{ channel.name }} — {{ title }}{% endblock %}
+{% block content %}
+<div class="player-wrap">
+  <div class="player-head">
+    <a href="/watch" class="back">← Все каналы</a>
+    <strong>{{ channel.name }}</strong>
+    <span class="badge {{ 'live' if channel.running else 'off' }}"
+          id="status-badge">
+      {{ 'LIVE' if channel.running else 'OFFLINE' }}
+    </span>
+  </div>
+
+  <div id="state-overlay"></div>
+
+  {% if channel.running and channel.hls_enabled %}
+    <video id="player" controls autoplay playsinline></video>
+    <div class="player-now muted small" id="now-playing">
+      {% if channel.current_file %}сейчас: {{ channel.current_file }}{% endif %}
+    </div>
+  {% elif channel.running and not channel.hls_enabled %}
+    <div class="flash flash-warn">
+      У канала отключён HLS. Доступен только multicast —
+      откройте в VLC: <code>udp://{{ channel.multicast_addr }}:{{ channel.multicast_port }}</code>
+    </div>
+  {% else %}
+    <div class="flash flash-warn">
+      Канал сейчас не работает. Обратитесь к администратору:
+      <a href="{{ admin_url }}channels">{{ admin_url }}channels</a>
+    </div>
+  {% endif %}
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.15/dist/hls.min.js"></script>
+<script>
+const CID = {{ channel.id }};
+
+(function () {
+  const video = document.getElementById('player');
+  if (!video) return;
+  const url = "/hls/{{ channel.id }}/index.m3u8";
+
+  if (video.canPlayType('application/vnd.apple.mpegurl')) {
+    video.src = url;
+  } else if (window.Hls && Hls.isSupported()) {
+    const hls = new Hls({ lowLatencyMode: false });
+    hls.loadSource(url);
+    hls.attachMedia(video);
+    hls.on(Hls.Events.ERROR, (e, data) => {
+      if (data.fatal) {
+        setTimeout(() => hls.loadSource(url), 3000);
+      }
+    });
+  } else {
+    video.replaceWith(Object.assign(document.createElement('div'), {
+      className: 'flash flash-warn',
+      innerHTML: 'Ваш браузер не поддерживает HLS. Откройте канал в VLC: ' +
+                 '<code>udp://{{ channel.multicast_addr }}:{{ channel.multicast_port }}</code>',
+    }));
+  }
+})();
+
+async function pollState() {
+  try {
+    const res = await fetch('/api/channels/' + CID, { cache: 'no-store' });
+    if (!res.ok) return setStopped();
+    const ch = await res.json();
+    if (ch.running) {
+      setLive(ch.current_file);
+    } else {
+      setStopped();
+    }
+  } catch (e) { /* network blip, ignore */ }
+}
+
+function setLive(fileName) {
+  document.getElementById('status-badge').className = 'badge live';
+  document.getElementById('status-badge').textContent = 'LIVE';
+  document.getElementById('state-overlay').innerHTML = '';
+  if (fileName) {
+    const el = document.getElementById('now-playing');
+    if (el) el.textContent = 'сейчас: ' + fileName;
+  }
+}
+
+function setStopped() {
+  document.getElementById('status-badge').className = 'badge off';
+  document.getElementById('status-badge').textContent = 'OFFLINE';
+  document.getElementById('state-overlay').innerHTML =
+    '<div class="flash flash-warn">Канал остановлен. Дождитесь перезапуска.</div>';
+  const v = document.getElementById('player');
+  if (v) { try { v.pause(); } catch (e) {} }
+}
+
+setInterval(pollState, 5000);
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') window.location = '/watch';
+});
+</script>
+{% endblock %}

@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>События</h1>
+{% if events %}
+  <table class="events">
+    <tr><th>Время (UTC)</th><th>Уровень</th><th>Источник</th><th>Сообщение</th></tr>
+    {% for e in events|reverse %}
+      <tr class="level-{{ e.level|lower }}">
+        <td>{{ e.ts }}</td>
+        <td>{{ e.level }}</td>
+        <td>{{ e.source }}</td>
+        <td>{{ e.message }}</td>
+      </tr>
+    {% endfor %}
+  </table>
+{% else %}
+  <p class="muted">Событий пока нет.</p>
+{% endif %}
+{% endblock %}

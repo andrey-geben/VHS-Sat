@@ -1,0 +1,50 @@
+# Пример конфигурации для VHS-Sat.
+# Скопируйте этот файл в config.yaml и заполните своими данными.
+# Секретный ключ и пользователи будут созданы автоматически при первом запуске.
+
+server:
+  title: VHS-Sat
+  host: 0.0.0.0
+  port: 8300
+  debug: false
+  secret_key: "" # Будет сгенерирован автоматически
+
+about:
+  version: "0.3.0-dev"
+  author: "Andrew Genben"
+  contact: ""
+  repo_url: "https://github.com/andrey-geben/VHS-Sat"
+  description: "Домашний стриминговый сервер: локальные каналы из папок, ретрансляция DVB-S/S2 (Linux), HLS и multicast MPEG-TS."
+  based_on:
+    name: "VHS-Streamer"
+    url: "https://github.com/andrey-geben/VHS-Streamer"
+    note: "архитектурные паттерны: Flask-каркас, YAML-конфиг, EventWriter, отдельный фоновый сервис"
+
+viewer:
+  enabled: true
+  port: 8301
+  public: true
+  title: "Домашнее ТВ"
+
+security:
+  auth_enabled: true
+  users: [] # Будут созданы при первом запуске /setup
+
+database:
+  path: data/vhs-sat.db
+
+logging:
+  events_file: logs/events.jsonl
+  level: INFO
+
+recordings:
+  enabled: false
+  directory: recordings
+
+hls:
+  enabled: true
+  directory: data/hls
+  public: true
+
+bumpers:
+  directory: data/bumpers

@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Дашборд</h1>
+{% if viewer_enabled %}
+<div class="card viewer-banner">
+  <div>
+    <strong>📺 Viewer</strong> — страница для просмотра каналов, публичная (без пароля).
+    Откройте на телевизоре / телефоне в той же Wi-Fi:
+  </div>
+  <code><a href="{{ viewer_url }}" target="_blank" rel="noopener">{{ viewer_url }}</a></code>
+</div>
+{% endif %}
+<section class="grid">
+  <div class="card">
+    <h2>Адаптеры</h2>
+    {% if adapters %}
+      <table>
+        <tr><th>ID</th><th>Устройство</th><th>FE</th><th>Lock</th><th>Signal</th></tr>
+        {% for a in adapters %}
+          <tr>
+            <td>{{ a.id }}</td>
+            <td>{{ a.device }}</td>
+            <td>{{ a.frontend }}</td>
+            <td>{{ "yes" if a.lock else "no" }}</td>
+            <td>{{ a.signal.strength }} / {{ a.signal.snr }}</td>
+          </tr>
+        {% endfor %}
+      </table>
+    {% else %}
+      <p class="muted">Адаптеры не обнаружены.</p>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h2>CI-слоты</h2>
+    {% if ci_slots %}
+      <table>
+        <tr><th>ID</th><th>Устройство</th><th>CAM</th><th>Статус</th></tr>
+        {% for c in ci_slots %}
+          <tr>
+            <td>{{ c.id }}</td>
+            <td>{{ c.device }}</td>
+            <td>{{ c.cam_type or "—" }}</td>
+            <td>{{ c.status }}</td>
+          </tr>
+        {% endfor %}
+      </table>
+    {% else %}
+      <p class="muted">CI-слоты не обнаружены.</p>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h2>Утилиты</h2>
+    <ul class="tools-list">
+      {% for name, path in tools.items() %}
+        <li>
+          {% if path %}
+            <span class="ok">✓</span> <code>{{ name }}</code>
+            <span class="muted small">{{ path }}</span>
+          {% else %}
+            <span class="missing">✗</span> <code>{{ name }}</code>
+            <span class="muted small">не найден</span>
+          {% endif %}
+        </li>
+      {% endfor %}
+    </ul>
+  </div>
+</section>
+
+{% if backend_name != 'linux-dvb' %}
+<div class="flash flash-info">
+  Вы работаете на stub-бэкенде ({{ backend_name }}). Реальные DVB-тесты возможны
+  только на Linux. См. <a href="{{ url_for('hardware_page') }}">Оборудование</a>.
+</div>
+{% endif %}
+{% endblock %}
