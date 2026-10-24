@@ -2,7 +2,7 @@
 
 No DVB, no CAM, no hardware probing. Everything else identical to the
 full server: two ports (admin 8300, viewer 8301), SQLite, events,
-ffmpeg-based HLS + multicast streaming.
+ffmpeg-based HLS + multicast streaming, EPG for folder channels.
 
 This is the PyInstaller entry point for VHS-Sat-Lite.exe.
 """
@@ -22,9 +22,9 @@ from auth import auth_bp, current_user, hash_password, login_required
 from channel_utils import enrich_channel
 from config import config
 from db import (
-    create_channel, delete_channel, find_channels_by_folder,
-    find_channels_by_stream_url, get_channel, init_db, list_channels,
-    update_channel,
+    create_channel, delete_channel, find_channel_by_number,
+    find_channels_by_folder, find_channels_by_stream_url, get_channel,
+    init_db, list_channels, next_free_number, update_channel,
 )
 from event_writer import events
 from frozen_utils import APP_ROOT, RESOURCE_ROOT, detect_lite_tools
@@ -92,6 +92,18 @@ def _validate_channel_payload(data: dict, exclude_id: int | None = None) -> str 
 
     if not (data.get("hls_enabled") or data.get("multicast_enabled")):
         return "включите хотя бы один вывод (HLS или multicast)"
+
+    num = data.get("channel_number")
+    if num is not None:
+        try:
+            num_int = int(num)
+        except (TypeError, ValueError):
+            return "номер канала должен быть целым числом"
+        if num_int < 1:
+            return "номер канала должен быть ≥ 1"
+        dup = find_channel_by_number(num_int, exclude_id=exclude_id)
+        if dup:
+            return f"номер {num_int} уже занят каналом «{dup['name']}»"
     return None
 
 
@@ -172,13 +184,65 @@ def create_lite_app() -> Flask:
         return render_template("dashboard_lite.html",
                                channels=channels, tools=detect_lite_tools())
 
-    # ---------- channels ----------
+    # ---------- channels: list ----------
     @app.route("/channels")
     @login_required
     def channels_page():
-        channels = [_channel_view(c) for c in list_channels()]
-        return render_template("channels.html",
-                               channels=channels, tools=detect_lite_tools())
+        from epg_utils import now_next
+
+        all_view = []
+        for ch in list_channels():
+            cv = _channel_view(ch)
+            if ch.get("source_type") == "folder" and cv.get("running"):
+                try:
+                    cv["epg_now"], cv["epg_next"] = now_next(
+                        ch, supervisor.get_state(ch["id"]),
+                    )
+                except Exception:  # noqa: BLE001
+                    cv["epg_now"] = cv["epg_next"] = None
+            all_view.append(cv)
+
+        counts = {
+            "total": len(all_view),
+            "folder": sum(1 for c in all_view if c.get("source_type") == "folder"),
+            "iptv": sum(1 for c in all_view if c.get("source_type") == "iptv"),
+            "camera": sum(1 for c in all_view if c.get("source_type") == "camera"),
+        }
+
+        type_filter = (request.args.get("type") or "").strip().lower()
+        if type_filter in ("folder", "iptv", "camera"):
+            view = [c for c in all_view if c.get("source_type") == type_filter]
+        else:
+            type_filter = ""
+            view = all_view
+
+        view.sort(key=lambda c: (
+            0 if c.get("running") else 1,
+            c.get("channel_number") or 9999,
+        ))
+
+        live = [c for c in view if c.get("running")]
+        offline = [c for c in view if not c.get("running")]
+
+        return render_template(
+            "channels.html",
+            live=live, offline=offline,
+            counts=counts, current_type=type_filter,
+            tools=detect_lite_tools(),
+        )
+
+    # ---------- channels: create (choice + forms) ----------
+    @app.route("/channels/new")
+    @login_required
+    def channels_new_choice():
+        return render_template("channels_new.html")
+
+    @app.route("/channels/new/<source_type>")
+    @login_required
+    def channel_new_form(source_type):
+        if source_type not in ("folder", "iptv", "camera"):
+            abort(404)
+        return render_template("channel_new.html", form_type=source_type)
 
     @app.route("/channels/create", methods=["POST"])
     @login_required
@@ -196,6 +260,7 @@ def create_lite_app() -> Flask:
             "stream_url": None,
             "stream_user": None,
             "stream_pass": None,
+            "channel_number": _to_int(request.form.get("channel_number"), None),
             "hls_enabled": 1 if _to_bool(request.form.get("hls_enabled", "on")) else 0,
             "multicast_enabled": 1 if _to_bool(request.form.get("multicast_enabled")) else 0,
             "multicast_addr": request.form.get("multicast_addr", "239.1.1.1").strip(),
@@ -206,6 +271,8 @@ def create_lite_app() -> Flask:
         if err:
             flash(err, "error")
             return redirect(url_for("channels_page"))
+        if not data.get("channel_number"):
+            data["channel_number"] = next_free_number()
         try:
             cid = create_channel(data)
         except Exception as exc:  # noqa: BLE001
@@ -234,6 +301,7 @@ def create_lite_app() -> Flask:
             "stream_url": request.form.get("stream_url", "").strip(),
             "stream_user": request.form.get("stream_user", "").strip() or None,
             "stream_pass": request.form.get("stream_pass", "").strip() or None,
+            "channel_number": _to_int(request.form.get("channel_number"), None),
             "hls_enabled": 1 if _to_bool(request.form.get("hls_enabled", "on")) else 0,
             "multicast_enabled": 1 if _to_bool(request.form.get("multicast_enabled")) else 0,
             "multicast_addr": request.form.get("multicast_addr", "239.1.1.1").strip(),
@@ -244,12 +312,15 @@ def create_lite_app() -> Flask:
         if err:
             flash(err, "error")
             return redirect(url_for("channels_page"))
+        if not data.get("channel_number"):
+            data["channel_number"] = next_free_number()
         cid = create_channel(data)
         events.info("channels",
                     f"created {source_type} channel {cid} '{data['name']}'")
         flash(f"Канал «{data['name']}» создан", "info")
         return redirect(url_for("channels_page"))
 
+    # ---------- channels: IPTV import ----------
     @app.route("/channels/iptv/import", methods=["GET", "POST"])
     @login_required
     def channels_iptv_import():
@@ -264,16 +335,16 @@ def create_lite_app() -> Flask:
                 playlist_text = fetch_playlist(url)
             except Exception as exc:  # noqa: BLE001
                 flash(f"Не удалось загрузить плейлист: {exc}", "error")
-                return redirect(url_for("channels_page"))
+                return redirect(url_for("channel_new_form", source_type="iptv"))
 
         if not playlist_text:
             flash("Укажите URL плейлиста или загрузите файл", "error")
-            return redirect(url_for("channels_page"))
+            return redirect(url_for("channel_new_form", source_type="iptv"))
 
         entries = parse_m3u(playlist_text)
         if not entries:
             flash("В плейлисте не найдено ни одного канала", "warn")
-            return redirect(url_for("channels_page"))
+            return redirect(url_for("channel_new_form", source_type="iptv"))
 
         groups = sorted({e["group"] for e in entries if e.get("group")})
         return render_template("iptv_import.html",
@@ -310,6 +381,7 @@ def create_lite_app() -> Flask:
                 "stream_url": u,
                 "stream_user": None,
                 "stream_pass": None,
+                "channel_number": None,
                 "hls_enabled": hls,
                 "multicast_enabled": mcast,
                 "multicast_addr": mcast_addr,
@@ -320,6 +392,7 @@ def create_lite_app() -> Flask:
             if err:
                 skipped += 1
                 continue
+            data["channel_number"] = next_free_number()
             try:
                 create_channel(data)
                 created += 1
@@ -335,6 +408,8 @@ def create_lite_app() -> Flask:
               + (f", пропущено {skipped}" if skipped else ""),
               "info" if created else "warn")
         return redirect(url_for("channels_page"))
+
+    # ---------- channels: edit ----------
     @app.route("/channels/<int:cid>/edit", methods=["GET"])
     @login_required
     def channel_edit_form(cid):
@@ -342,6 +417,7 @@ def create_lite_app() -> Flask:
         if not ch:
             abort(404)
         return render_template("channel_edit.html", channel=_channel_view(ch))
+
     @app.route("/channels/<int:cid>/edit", methods=["POST"])
     @login_required
     def channels_edit(cid):
@@ -357,6 +433,8 @@ def create_lite_app() -> Flask:
             "codec_strategy": request.form.get("codec_strategy", ch["codec_strategy"]),
             "bumper_enabled": 1 if _to_bool(request.form.get("bumper_enabled")) else 0,
             "bumper_duration_sec": _to_int(request.form.get("bumper_duration_sec"), ch["bumper_duration_sec"]),
+            "channel_number": _to_int(request.form.get("channel_number"),
+                                      ch.get("channel_number")),
             "hls_enabled": 1 if _to_bool(request.form.get("hls_enabled")) else 0,
             "multicast_enabled": 1 if _to_bool(request.form.get("multicast_enabled")) else 0,
             "multicast_addr": request.form.get("multicast_addr", ch["multicast_addr"]).strip(),
@@ -436,6 +514,25 @@ def create_lite_app() -> Flask:
         flash(f"Журнал очищен (удалено {removed} записей)", "info")
         return redirect(url_for("events_page"))
 
+    # ---------- EPG ----------
+    @app.route("/epg")
+    @login_required
+    def epg_page():
+        from epg_utils import channel_schedule
+
+        view = []
+        for ch in list_channels():
+            cv = _channel_view(ch)
+            if ch.get("source_type") == "folder":
+                sched = channel_schedule(
+                    ch, supervisor.get_state(ch["id"]), horizon_min=180,
+                )
+            else:
+                sched = []
+            cv["schedule"] = sched
+            view.append(cv)
+        return render_template("epg.html", channels=view)
+
     # ---------- about ----------
     @app.route("/about")
     @login_required
@@ -482,6 +579,7 @@ def create_lite_app() -> Flask:
         data.setdefault("stream_url", None)
         data.setdefault("stream_user", None)
         data.setdefault("stream_pass", None)
+        data.setdefault("channel_number", None)
         data.setdefault("multicast_addr", "239.1.1.1")
         data.setdefault("multicast_port", 5000)
         data.setdefault("enabled", 1)
@@ -491,6 +589,8 @@ def create_lite_app() -> Flask:
         err = _validate_channel_payload(data)
         if err:
             return jsonify({"ok": False, "error": err}), 400
+        if not data.get("channel_number"):
+            data["channel_number"] = next_free_number()
         cid = create_channel(data)
         return jsonify({"ok": True, "id": cid}), 201
 
