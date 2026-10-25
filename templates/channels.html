@@ -38,12 +38,12 @@
       в нём без перезагрузки.
     </div>
     <div class="playlist-card-urls">
-      <a href="{{ viewer_url }}playlist.m3u"
+      <a href="{{ playlist_url }}"
          target="_blank" rel="noopener" class="playlist-url">
-        📄 {{ viewer_url }}playlist.m3u
+        📄 {{ playlist_url }}
       </a>
       <button type="button" class="playlist-copy btn-copy"
-              data-copy="{{ viewer_url }}playlist.m3u"
+              data-copy="{{ playlist_url }}"
               title="Скопировать URL плейлиста">📋 копировать</button>
     </div>
     <div class="playlist-card-hint">
@@ -51,6 +51,10 @@
       чтобы телевизор и телефон могли её загрузить.
       Для VLC на той же сети — <code>?format=multicast</code> (меньше задержка).
       Только камеры — <code>?type=camera</code>.
+      {% if cfg_playlist_token_set %}
+        <br>🔒 <strong>Плейлист защищён токеном.</strong>
+        URL содержит <code>?token=...</code> — не публикуйте его.
+      {% endif %}
     </div>
   </div>
 </div>

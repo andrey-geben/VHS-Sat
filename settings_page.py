@@ -7,6 +7,8 @@ immediately because the app reads config on each request.
 """
 from __future__ import annotations
 
+import secrets
+
 from flask import Blueprint, flash, redirect, render_template, request, url_for
 
 from auth import authenticate, current_user, hash_password, login_required
@@ -45,6 +47,16 @@ def settings_page():
     )
 
 
+@settings_bp.route("/settings/regenerate-playlist-token", methods=["POST"])
+@login_required
+def regenerate_playlist_token():
+    token = secrets.token_urlsafe(24)
+    config.set("viewer", "playlist_token", value=token)
+    events.info("settings", "playlist token regenerated")
+    flash("Токен плейлиста обновлён. Не забудьте обновить URL на ТВ.", "info")
+    return redirect(url_for("settings.settings_page"))
+
+
 @settings_bp.route("/settings/save", methods=["POST"])
 @login_required
 def settings_save():
@@ -55,6 +67,8 @@ def settings_save():
                    or config.get("server", "host", default="0.0.0.0"))
     server_port = _to_int(request.form.get("server_port"),
                           config.get("server", "port", default=8300))
+    server_threads = _to_int(request.form.get("server_threads"),
+                             config.get("server", "threads", default=8))
     server_debug = _to_bool(request.form.get("server_debug"))
 
     # --- viewer ---
@@ -64,6 +78,13 @@ def settings_save():
                           config.get("viewer", "port", default=8301))
     viewer_public = _to_bool(request.form.get("viewer_public"))
     viewer_enabled = _to_bool(request.form.get("viewer_enabled"))
+
+    # playlist token — empty in form = no token (clear). If field absent from
+    # form entirely, keep current value (defensive for old forms).
+    if "playlist_token" in request.form:
+        playlist_token = request.form.get("playlist_token", "").strip()
+    else:
+        playlist_token = config.get("viewer", "playlist_token", default="") or ""
 
     # --- security ---
     auth_enabled = _to_bool(request.form.get("auth_enabled"))
@@ -92,6 +113,8 @@ def settings_save():
         errors.append("viewer.port вне диапазона 1..65535")
     if server_port == viewer_port:
         errors.append("server.port и viewer.port не могут совпадать")
+    if not (1 <= server_threads <= 64):
+        errors.append("server.threads вне диапазона 1..64")
 
     if errors:
         for e in errors:
@@ -105,6 +128,8 @@ def settings_save():
         restart_fields.append("server.host/port")
     if server_debug != bool(config.get("server", "debug")):
         restart_fields.append("server.debug")
+    if server_threads != config.get("server", "threads", default=8):
+        restart_fields.append("server.threads")
     if (viewer_enabled != bool(config.get("viewer", "enabled"))
             or viewer_port != config.get("viewer", "port")):
         restart_fields.append("viewer.enabled/port")
@@ -113,12 +138,14 @@ def settings_save():
     config.set("server", "title", value=server_title)
     config.set("server", "host", value=server_host)
     config.set("server", "port", value=server_port)
+    config.set("server", "threads", value=server_threads)
     config.set("server", "debug", value=server_debug)
 
     config.set("viewer", "title", value=viewer_title)
     config.set("viewer", "port", value=viewer_port)
     config.set("viewer", "public", value=viewer_public)
     config.set("viewer", "enabled", value=viewer_enabled)
+    config.set("viewer", "playlist_token", value=playlist_token)
 
     config.set("security", "auth_enabled", value=auth_enabled)
 

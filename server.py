@@ -141,6 +141,11 @@ def create_app() -> Flask:
         viewer_port = config.get("viewer", "port", default=8301)
         viewer_enabled = config.get("viewer", "enabled", default=True)
         host = request.host.split(":")[0]
+        playlist_token = (config.get("viewer", "playlist_token", default="") or "").strip()
+        playlist_base = f"http://{host}:{viewer_port}/playlist.m3u"
+        playlist_url = (
+            f"{playlist_base}?token={playlist_token}" if playlist_token else playlist_base
+        )
         return {
             "title": config.get("server", "title", default="VHS-Sat"),
             "current_user": current_user(),
@@ -151,6 +156,7 @@ def create_app() -> Flask:
             "viewer_url": f"http://{host}:{viewer_port}/",
             "admin_port": admin_port,
             "admin_url": f"http://{host}:{admin_port}/",
+            "playlist_url": playlist_url,
             "about": config.get("about", default={}),
             "edition": "full",
         }

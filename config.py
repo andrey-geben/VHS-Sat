@@ -47,6 +47,7 @@ DEFAULTS: dict[str, Any] = {
         "port": 8301,
         "public": True,
         "title": "Домашнее ТВ",
+        "playlist_token": "",
     },
     "security": {
         "auth_enabled": True,

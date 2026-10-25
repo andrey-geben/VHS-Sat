@@ -4,13 +4,12 @@ Public by default (home LAN). Set viewer.public=false to require auth;
 the session cookie is shared with the admin app because both use the
 same SECRET_KEY (cookies are port-agnostic on the same host).
 
-Shows only enabled channels. The grid page polls /api/channels every
-10 s, so newly created channels appear automatically.
-
 Serves /playlist.m3u(.m3u8) — a live M3U playlist of all running
-channels, ready for VLC/Kodi/TiviMate/any IPTV player.
+channels. If viewer.playlist_token is set, requires ?token=XXX.
 """
 from __future__ import annotations
+
+import hmac
 
 from flask import (
     Flask, abort, jsonify, redirect, render_template, request,
@@ -95,11 +94,13 @@ def create_viewer_app() -> Flask:
 
     @app.context_processor
     def inject():
+        token_set = bool(config.get("viewer", "playlist_token", default="") or "")
         return {
             "title": config.get("viewer", "title", default="Домашнее ТВ"),
             "viewer_port": config.get("viewer", "port", default=8301),
             "admin_url": _admin_base(),
             "about": config.get("about", default={}),
+            "playlist_public": not token_set,
         }
 
     @app.before_request
@@ -139,6 +140,13 @@ def create_viewer_app() -> Flask:
     @app.route("/playlist.m3u8")
     @app.route("/playlist.m3u")
     def playlist_m3u():
+        required_token = config.get("viewer", "playlist_token", default="") or ""
+        if required_token:
+            provided = request.args.get("token", "")
+            if not hmac.compare_digest(provided, required_token):
+                # 404, not 401 — don't reveal that the playlist exists
+                abort(404)
+
         host = request.host.split(":")[0]
         viewer_port = config.get("viewer", "port", default=8301)
         prefer = (request.args.get("format") or "hls").lower()
@@ -210,5 +218,10 @@ def create_viewer_app() -> Flask:
 def _log_startup():
     port = config.get("viewer", "port", default=8301)
     public = config.get("viewer", "public", default=True)
+    token_set = bool(config.get("viewer", "playlist_token", default="") or "")
     events.info("viewer", f"viewer on http://0.0.0.0:{port} (public={public})")
-    events.info("viewer", f"playlist: http://0.0.0.0:{port}/playlist.m3u")
+    events.info(
+        "viewer",
+        f"playlist: http://0.0.0.0:{port}/playlist.m3u "
+        f"(token {'set' if token_set else 'not set'})",
+    )
