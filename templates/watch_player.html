@@ -44,8 +44,17 @@
       <div class="menu-tabs" id="menu-tabs"></div>
       <div class="menu-grid" id="menu-grid"></div>
       <div class="menu-help">
-        ←→ вкладки/карточки · ↑↓ строки · OK выбрать · Esc закрыть
+        ←→ вкладки/карточки · ↑↓ строки · OK выбрать · буквы — поиск · Esc закрыть
       </div>
+    </div>
+  </div>
+
+  <div id="screensaver" class="tv-overlay screensaver hidden">
+    <div class="ss-inner">
+      <div class="ss-clock" id="ss-clock">--:--</div>
+      <div class="ss-channel" id="ss-channel"></div>
+      <div class="ss-meta" id="ss-meta"></div>
+      <div class="ss-hint">нажмите любую клавишу</div>
     </div>
   </div>
 
@@ -58,6 +67,7 @@
   const INITIAL_CHANNEL_ID = {{ channel.id }};
   const API_LIST = "/api/channels";
   const PLAYER_TITLE = {{ title|tojson }};
+  const SCREENSAVER_TIMEOUT_MS = 5 * 60 * 1000;   // 5 минут
 
   const video = document.getElementById('player');
   const infoOverlay = document.getElementById('info-overlay');
@@ -67,6 +77,7 @@
   const menuGrid = document.getElementById('menu-grid');
   const toast = document.getElementById('toast');
   const playerWrap = document.getElementById('player-wrap');
+  const screensaverEl = document.getElementById('screensaver');
 
   let channels = [];
   let filteredChannels = [];
@@ -76,17 +87,25 @@
   let menuOpen = false;
   let infoVisible = true;
   let focusedIndex = 0;
-  let focusArea = 'grid';      // 'tabs' | 'grid'
-  let activeTab = '';          // '' | 'folder' | 'iptv' | 'camera' | 'mosaic'
+  let focusArea = 'grid';
+  let activeTab = '';
   let cardsPerRow = 1;
   let hintTimer = null;
   let infoTimer = null;
   let digitBuffer = '';
   let digitTimer = null;
+  let searchBuffer = '';
+  let searchTimer = null;
   let refreshTimer = null;
   let loadSeq = 0;
   let navStack = [];
   let navPos = -1;
+
+  // screensaver state
+  let lastActivityAt = Date.now();
+  let screensaverVisible = false;
+  let screensaverClockTimer = null;
+  let screensaverCheckTimer = null;
 
   const TAB_DEFS = [
     { key: '',       icon: '',   label: 'Все' },
@@ -98,6 +117,59 @@
 
   isNativeHls = !!video.canPlayType('application/vnd.apple.mpegurl');
 
+  // -------------- ACTIVITY / SCREENSAVER --------------
+  function resetActivity() {
+    lastActivityAt = Date.now();
+    if (screensaverVisible) hideScreensaver();
+  }
+
+  function showScreensaver() {
+    if (screensaverVisible) return;
+    screensaverVisible = true;
+    screensaverEl.classList.remove('hidden');
+    hideInfo();
+    hideHintBar();
+    updateScreensaverContent();
+    screensaverClockTimer = setInterval(updateScreensaverContent, 1000);
+  }
+
+  function hideScreensaver() {
+    screensaverVisible = false;
+    screensaverEl.classList.add('hidden');
+    clearInterval(screensaverClockTimer);
+    screensaverClockTimer = null;
+    lastActivityAt = Date.now();
+  }
+
+  function updateScreensaverContent() {
+    const now = new Date();
+    const hh = String(now.getHours()).padStart(2, '0');
+    const mm = String(now.getMinutes()).padStart(2, '0');
+    document.getElementById('ss-clock').textContent = hh + ':' + mm;
+
+    const ch = currentChannel();
+    if (ch) {
+      const num = ch.channel_number ? ch.channel_number + ' · ' : '';
+      document.getElementById('ss-channel').textContent = num + ch.name;
+      const meta = ch.epg_now ? 'сейчас: ' + ch.epg_now : '';
+      document.getElementById('ss-meta').textContent = meta;
+    } else {
+      document.getElementById('ss-channel').textContent = '';
+      document.getElementById('ss-meta').textContent = '';
+    }
+  }
+
+  function startScreensaverWatcher() {
+    clearInterval(screensaverCheckTimer);
+    screensaverCheckTimer = setInterval(() => {
+      if (screensaverVisible) return;
+      if (Date.now() - lastActivityAt >= SCREENSAVER_TIMEOUT_MS) {
+        showScreensaver();
+      }
+    }, 10000);
+  }
+
+  // -------------- HLS --------------
   function hlsUrl(channelId) {
     return '/hls/' + channelId + '/index.m3u8';
   }
@@ -181,6 +253,7 @@
     const ch = channels.find(c => c.id === channelId);
     if (!ch) { showToast('Канал не найден'); return; }
 
+    resetActivity();
     const mySeq = ++loadSeq;
 
     if (!ch.running) {
@@ -237,6 +310,7 @@
     document.title = ch.name + ' — ' + PLAYER_TITLE;
   }
 
+  // -------------- INFO PANEL --------------
   function currentChannel() {
     return channels.find(c => c.id === currentChannelId);
   }
@@ -303,15 +377,22 @@
     infoOverlay.classList.remove('hidden');
     clearTimeout(infoTimer);
     infoTimer = setTimeout(() => {
-      if (!menuOpen) { infoOverlay.classList.add('hidden'); infoVisible = false; }
+      if (!menuOpen && !screensaverVisible) {
+        infoOverlay.classList.add('hidden');
+        infoVisible = false;
+      }
     }, 5000);
   }
   function hideInfo() { infoOverlay.classList.add('hidden'); infoVisible = false; }
 
-  function showHint() {
+  function showHintBar() {
     hintBar.classList.remove('hidden');
     clearTimeout(hintTimer);
     hintTimer = setTimeout(() => hintBar.classList.add('hidden'), 5000);
+  }
+  function hideHintBar() {
+    hintBar.classList.add('hidden');
+    clearTimeout(hintTimer);
   }
 
   let toastTimer = null;
@@ -322,6 +403,7 @@
     toastTimer = setTimeout(() => toast.classList.add('hidden'), 2500);
   }
 
+  // -------------- SWITCHING --------------
   function channelByNumber(num) { return channels.find(c => c.channel_number === num); }
   function channelIndex(cid) { return channels.findIndex(c => c.id === cid); }
   function switchByOffset(delta) {
@@ -371,6 +453,7 @@
     }).join('');
     menuTabs.querySelectorAll('.menu-tab').forEach(btn => {
       btn.addEventListener('click', () => {
+        resetActivity();
         const key = btn.dataset.tab || '';
         if (key === activeTab) { focusArea = 'grid'; focusedIndex = 0; }
         else { activeTab = key; focusArea = 'grid'; buildFiltered(); focusedIndex = 0; }
@@ -416,6 +499,7 @@
     menuOpen = true;
     menuOverlay.classList.remove('hidden');
     hideInfo();
+    resetActivity();
 
     const ch = currentChannel();
     activeTab = ch && ch.source_type ? ch.source_type : '';
@@ -423,6 +507,8 @@
     const idx = filteredChannels.findIndex(c => c.id === currentChannelId);
     focusedIndex = idx >= 0 ? idx : 0;
     focusArea = 'grid';
+    searchBuffer = '';
+    clearTimeout(searchTimer);
 
     renderMenu();
   }
@@ -430,13 +516,15 @@
   function closeMenu() {
     menuOpen = false;
     menuOverlay.classList.add('hidden');
+    searchBuffer = '';
+    clearTimeout(searchTimer);
   }
 
   function menuSwitchTab(dir) {
     const keys = TAB_DEFS.map(t => t.key);
     const cur = keys.indexOf(activeTab);
     if (cur < 0) return;
-    let next = (cur + dir + keys.length) % keys.length;
+    const next = (cur + dir + keys.length) % keys.length;
     activeTab = keys[next];
     buildFiltered();
     focusedIndex = 0;
@@ -484,6 +572,26 @@
     })[c]);
   }
 
+  // -------------- SEARCH IN MENU --------------
+  function handleSearchChar(ch) {
+    if (!menuOpen) return;
+    searchBuffer += ch.toLowerCase();
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => { searchBuffer = ''; }, 1500);
+
+    const found = filteredChannels.findIndex(c =>
+      (c.name || '').toLowerCase().startsWith(searchBuffer)
+    );
+    if (found >= 0) {
+      focusedIndex = found;
+      focusArea = 'grid';
+      updateMenuSelection();
+      showToast('🔍 ' + searchBuffer);
+    } else {
+      showToast('🔍 ' + searchBuffer + ' — не найдено');
+    }
+  }
+
   // -------------- DIGITS --------------
   function handleDigit(d) {
     digitBuffer += d;
@@ -510,8 +618,11 @@
 
   // -------------- ACTIONS --------------
   function handleAction(action) {
-    showHint();
+    resetActivity();
+    if (!screensaverVisible) showHintBar();
+
     if (action.startsWith('digit:')) { handleDigit(action.slice(6)); return; }
+    if (action.startsWith('search:')) { handleSearchChar(action.slice(7)); return; }
 
     if (action === 'up') {
       if (menuOpen) menuMoveInGrid('up');
@@ -530,6 +641,7 @@
         else menuMoveInGrid('right');
       }
     } else if (action === 'ok') {
+      if (screensaverVisible) { hideScreensaver(); return; }
       if (menuOpen) menuActivate();
       else openMenu();
     } else if (action === 'back') {
@@ -539,6 +651,16 @@
       if (infoVisible) hideInfo();
       else showInfo();
     }
+  }
+
+  function isLetter(ch) {
+    if (!ch || ch.length !== 1) return false;
+    const code = ch.charCodeAt(0);
+    if (code >= 0x0041 && code <= 0x005A) return true;       // A-Z
+    if (code >= 0x0061 && code <= 0x007A) return true;       // a-z
+    if (code >= 0x0410 && code <= 0x044F) return true;       // А-я
+    if (code === 0x0401 || code === 0x0451) return true;     // Ё / ё
+    return false;
   }
 
   function classifyKey(e) {
@@ -554,15 +676,30 @@
     if (key >= '0' && key <= '9') return 'digit:' + key;
     if (code >= 48 && code <= 57) return 'digit:' + String.fromCharCode(code);
     if (code >= 96 && code <= 105) return 'digit:' + String.fromCharCode(code - 48);
+    if (isLetter(key)) return 'search:' + key;
     return null;
   }
 
+  // -------------- GLOBAL LISTENERS --------------
   document.addEventListener('keydown', (e) => {
     const t = e.target;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return;
+
+    // Any key = activity
+    resetActivity();
+
+    // If screensaver is on, swallow the first key and hide it
+    if (screensaverVisible) {
+      e.preventDefault();
+      return;
+    }
+
     const action = classifyKey(e);
     if (action) { e.preventDefault(); handleAction(action); }
   });
+
+  document.addEventListener('mousemove', () => { resetActivity(); }, { passive: true });
+  document.addEventListener('touchstart', () => { resetActivity(); }, { passive: true });
 
   menuGrid.addEventListener('click', (e) => {
     const card = e.target.closest('.menu-card');
@@ -572,9 +709,18 @@
     menuActivate();
   });
   document.getElementById('menu-close').addEventListener('click', closeMenu);
-  video.addEventListener('click', () => { if (!menuOpen) openMenu(); });
-  window.addEventListener('resize', () => { if (menuOpen) cardsPerRow = computeCardsPerRow(); });
+  video.addEventListener('click', () => {
+    resetActivity();
+    if (screensaverVisible) return;
+    if (!menuOpen) openMenu();
+  });
+  screensaverEl.addEventListener('click', () => { resetActivity(); });
 
+  window.addEventListener('resize', () => {
+    if (menuOpen) cardsPerRow = computeCardsPerRow();
+  });
+
+  // -------------- REFRESH --------------
   async function refreshChannels() {
     try {
       const r = await fetch(API_LIST, { cache: 'no-store' });
@@ -594,6 +740,7 @@
     await loadChannel(INITIAL_CHANNEL_ID, true);
     showInfo();
     refreshTimer = setInterval(refreshChannels, 30000);
+    startScreensaverWatcher();
   }
 
   init();

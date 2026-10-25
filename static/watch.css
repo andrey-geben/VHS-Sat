@@ -21,7 +21,7 @@ body.viewer-body:hover { cursor: default; }
 .viewer-empty-title { font-size: 1.4rem; margin: 0 0 .6rem; }
 .viewer-empty a { color: #4aa3e0; }
 
-/* ============ watch grid (channel cards on /watch) ============ */
+/* ============ watch grid ============ */
 .watch-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
@@ -135,7 +135,6 @@ body.viewer-body:hover { cursor: default; }
 .menu-close { cursor: pointer; font-size: 1.4rem; padding: 0 0.4rem; color: #7b8a96; }
 .menu-close:hover { color: #e8eef2; }
 
-/* tabs row */
 .menu-tabs {
   display: flex; gap: 0.3rem; flex-wrap: wrap;
   margin-bottom: 0.9rem; padding-bottom: 0.4rem;
@@ -154,9 +153,7 @@ body.viewer-body:hover { cursor: default; }
   color: #4aa3e0; border-color: #4aa3e0; background: rgba(74,163,224,.12);
   font-weight: 600;
 }
-.menu-tab.focused {
-  outline: 2px solid #f0c97c; outline-offset: 2px;
-}
+.menu-tab.focused { outline: 2px solid #f0c97c; outline-offset: 2px; }
 .menu-tab-count {
   display: inline-block; font-size: 0.75rem;
   background: rgba(255,255,255,.08); padding: 0.05rem 0.4rem;
@@ -166,7 +163,6 @@ body.viewer-body:hover { cursor: default; }
   background: rgba(74,163,224,.3); color: #4aa3e0;
 }
 
-/* grid */
 .menu-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
@@ -241,6 +237,43 @@ body.viewer-body:hover { cursor: default; }
 }
 @keyframes prep-spin { to { transform: rotate(360deg); } }
 
+/* ============ screensaver ============ */
+.screensaver {
+  inset: 0;
+  background: #000;
+  display: flex; align-items: center; justify-content: center;
+  z-index: 30;
+  animation: ss-fadein 0.8s ease;
+}
+@keyframes ss-fadein { from { opacity: 0; } to { opacity: 1; } }
+.ss-inner {
+  text-align: center;
+  animation: ss-drift 20s ease-in-out infinite alternate;
+}
+@keyframes ss-drift {
+  from { transform: translate(-8px, -6px); }
+  to   { transform: translate(8px, 6px); }
+}
+.ss-clock {
+  font-size: 10rem; font-weight: 200; letter-spacing: 0.05em;
+  color: #e8eef2; line-height: 1;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 0 30px rgba(74,163,224,.25);
+}
+.ss-channel {
+  font-size: 2rem; font-weight: 500; color: #4aa3e0;
+  margin-top: 2rem; letter-spacing: 0.03em;
+}
+.ss-meta {
+  font-size: 1.1rem; color: #7b8a96; margin-top: 0.6rem;
+  max-width: 800px; margin-left: auto; margin-right: auto;
+  padding: 0 1rem;
+}
+.ss-hint {
+  font-size: 0.85rem; color: #3a4d5a; margin-top: 3rem;
+  letter-spacing: 0.08em; text-transform: uppercase;
+}
+
 /* ============ about-viewer ============ */
 .about-viewer .viewer-card {
   background: #1a2230; border-radius: 10px;
@@ -253,6 +286,9 @@ body.viewer-body:hover { cursor: default; }
 /* ============ responsive ============ */
 @media (max-width: 900px) {
   .menu-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+  .ss-clock { font-size: 6rem; }
+  .ss-channel { font-size: 1.5rem; margin-top: 1.2rem; }
+  .ss-meta { font-size: 0.95rem; }
 }
 @media (max-width: 700px) {
   .info-number { font-size: 2rem; }
@@ -266,4 +302,8 @@ body.viewer-body:hover { cursor: default; }
   .watch-name { font-size: 1.4rem; }
   .watch-num { font-size: 1.3rem; }
   .menu-tab { font-size: 0.8rem; padding: 0.3rem 0.6rem; }
+  .ss-clock { font-size: 4rem; }
+  .ss-channel { font-size: 1.2rem; }
+  .ss-meta { font-size: 0.85rem; }
+  .ss-hint { font-size: 0.75rem; margin-top: 2rem; }
 }
