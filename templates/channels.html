@@ -26,6 +26,36 @@
   </div>
 </div>
 
+{% if viewer_enabled and (live or offline) %}
+<div class="playlist-card">
+  <div class="playlist-card-icon">📻</div>
+  <div class="playlist-card-body">
+    <div class="playlist-card-title">Плейлист запущенных каналов</div>
+    <div class="playlist-card-desc">
+      Загрузите эту ссылку в <strong>VLC</strong>, <strong>Kodi</strong>,
+      <strong>TiviMate</strong> или любое IPTV-приложение. Плейлист
+      обновляется автоматически — новые запущенные каналы появляются
+      в нём без перезагрузки.
+    </div>
+    <div class="playlist-card-urls">
+      <a href="{{ viewer_url }}playlist.m3u"
+         target="_blank" rel="noopener" class="playlist-url">
+        📄 {{ viewer_url }}playlist.m3u
+      </a>
+      <button type="button" class="playlist-copy btn-copy"
+              data-copy="{{ viewer_url }}playlist.m3u"
+              title="Скопировать URL плейлиста">📋 копировать</button>
+    </div>
+    <div class="playlist-card-hint">
+      💡 Открывайте ссылку с <strong>LAN-IP</strong> (не с localhost),
+      чтобы телевизор и телефон могли её загрузить.
+      Для VLC на той же сети — <code>?format=multicast</code> (меньше задержка).
+      Только камеры — <code>?type=camera</code>.
+    </div>
+  </div>
+</div>
+{% endif %}
+
 <nav class="ch-tabs">
   <a href="{{ url_for('channels_page') }}" class="ch-tab {% if not current_type %}active{% endif %}">
     Все <span class="ch-tab-count">{{ counts.total }}</span>
@@ -87,6 +117,7 @@
               {% if ch.current_file %}{{ ch.current_file }}{% if ch.position_sec %} <span class="muted">· {{ ch.position_sec }} с</span>{% endif %}
               {% elif ch.source_type == 'iptv' %}<span class="muted">прямой эфир</span>
               {% elif ch.source_type == 'camera' %}<span class="muted">камера</span>
+              {% elif ch.source_type == 'mosaic' %}<span class="muted">мозаика</span>
               {% else %}—{% endif %}
             </td>
             <td class="ch-col-next">{{ ch.epg_next or '—' }}</td>
@@ -165,10 +196,24 @@ function confirmClear(count, typeFilter) {
   const labels = { folder: 'канала(ов) из папок', iptv: 'IPTV-канала(ов)', camera: 'канала(ов)-камер', mosaic: 'канала(ов)-мозаик' };
   const what = typeFilter ? (labels[typeFilter] || 'канала(ов)') : 'канала(ов) ВСЕХ типов';
   return window.confirm(
-    'Удалить ' + count + ' ' + what + '?\n\n' +
-    'Будут:\n  • остановлены запущенные каналы\n  • удалены записи из БД\n  • удалены HLS и плейлисты\n\n' +
+    'Удалить ' + count + ' ' + what + '?\\n\\n' +
+    'Будут:\\n  • остановлены запущенные каналы\\n  • удалены записи из БД\\n  • удалены HLS и плейлисты\\n\\n' +
     'Это действие НЕЛЬЗЯ отменить.'
   );
 }
+
+document.querySelectorAll('.btn-copy').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    const text = btn.dataset.copy;
+    try {
+      await navigator.clipboard.writeText(text);
+      const original = btn.textContent;
+      btn.textContent = '✓ скопировано';
+      setTimeout(() => { btn.textContent = original; }, 1500);
+    } catch (e) {
+      prompt('Скопируйте вручную:', text);
+    }
+  });
+});
 </script>
 {% endblock %}

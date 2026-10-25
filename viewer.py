@@ -6,14 +6,15 @@ same SECRET_KEY (cookies are port-agnostic on the same host).
 
 Shows only enabled channels. The grid page polls /api/channels every
 10 s, so newly created channels appear automatically.
+
+Serves /playlist.m3u(.m3u8) — a live M3U playlist of all running
+channels, ready for VLC/Kodi/TiviMate/any IPTV player.
 """
 from __future__ import annotations
-from channel_utils import enrich_channel
-from pathlib import Path
 
 from flask import (
     Flask, abort, jsonify, redirect, render_template, request,
-    send_from_directory, session, url_for,
+    Response, send_from_directory, session, url_for,
 )
 
 from config import config
@@ -25,11 +26,18 @@ from supervisor import supervisor
 
 DATA_DIR = APP_ROOT / "data"
 
+GROUP_TITLES = {
+    "folder": "Папки",
+    "iptv": "IPTV",
+    "camera": "Камеры",
+    "mosaic": "Мозаики",
+    "dvb": "DVB",
+}
+
 
 def _channel_view(ch: dict) -> dict:
     st = supervisor.get_state(ch["id"])
-    base = {**ch, **st, "running": bool(st.get("running"))}
-    return enrich_channel(base)
+    return {**ch, **st, "running": bool(st.get("running"))}
 
 
 def _admin_base() -> str:
@@ -45,6 +53,36 @@ def _auth_redirect():
         return None
     target = f"{_admin_base()}/login?next={request.url}"
     return redirect(target)
+
+
+def _playlist_url_for(ch: dict, host: str, viewer_port: int, prefer: str) -> str | None:
+    has_hls = bool(ch.get("hls_enabled"))
+    has_mcast = bool(ch.get("multicast_enabled") and ch.get("multicast_addr"))
+
+    hls_url = f"http://{host}:{viewer_port}/hls/{ch['id']}/index.m3u8"
+    mcast_url = (f"udp://@{ch['multicast_addr']}:{ch['multicast_port']}"
+                 if has_mcast else None)
+
+    if prefer == "multicast":
+        return mcast_url or (hls_url if has_hls else None)
+    return hls_url if has_hls else mcast_url
+
+
+def _generate_m3u(channels: list[dict], host: str, viewer_port: int, prefer: str) -> str:
+    lines: list[str] = ["#EXTM3U"]
+    for ch in channels:
+        url = _playlist_url_for(ch, host, viewer_port, prefer)
+        if not url:
+            continue
+        num = ch.get("channel_number") or 0
+        name = (ch.get("name") or f"Channel {ch['id']}").strip()
+        group = GROUP_TITLES.get(ch.get("source_type") or "", "Другое")
+        lines.append(
+            f'#EXTINF:-1 tvg-chno="{num}" tvg-name="{name}" '
+            f'group-title="{group}",{name}'
+        )
+        lines.append(url)
+    return "\n".join(lines) + "\n"
 
 
 def create_viewer_app() -> Flask:
@@ -66,6 +104,9 @@ def create_viewer_app() -> Flask:
 
     @app.before_request
     def _gate():
+        # playlist must remain reachable for TV apps even if viewer needs auth
+        if request.endpoint == "playlist_m3u":
+            return None
         r = _auth_redirect()
         if r:
             return r
@@ -94,6 +135,49 @@ def create_viewer_app() -> Flask:
         if not hls_root.is_dir():
             abort(404)
         return send_from_directory(hls_root, filename, mimetype=None)
+
+    @app.route("/playlist.m3u8")
+    @app.route("/playlist.m3u")
+    def playlist_m3u():
+        host = request.host.split(":")[0]
+        viewer_port = config.get("viewer", "port", default=8301)
+        prefer = (request.args.get("format") or "hls").lower()
+        if prefer not in ("hls", "multicast"):
+            prefer = "hls"
+        type_filter = (request.args.get("type") or "").strip().lower()
+
+        running: list[dict] = []
+        for ch in list_channels():
+            if not ch.get("enabled"):
+                continue
+            if not supervisor.get_state(ch["id"]).get("running"):
+                continue
+            if type_filter and ch.get("source_type") != type_filter:
+                continue
+            running.append(ch)
+
+        body = _generate_m3u(running, host, viewer_port, prefer)
+        events.info(
+            "playlist",
+            f"playlist served: {len(running)} channels, "
+            f"format={prefer}, type={type_filter or 'all'}",
+        )
+
+        ext = (request.path.rsplit(".", 1)[-1] or "m3u").lower()
+        if ext == "m3u8":
+            mime, filename = "application/vnd.apple.mpegurl", "vhs-sat.m3u8"
+        else:
+            mime, filename = "audio/x-mpegurl", "vhs-sat.m3u"
+
+        return Response(
+            body,
+            mimetype=mime,
+            headers={
+                "Content-Disposition": f'inline; filename="{filename}"',
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Access-Control-Allow-Origin": "*",
+            },
+        )
 
     @app.route("/api/channels")
     def api_channels():
@@ -127,3 +211,4 @@ def _log_startup():
     port = config.get("viewer", "port", default=8301)
     public = config.get("viewer", "public", default=True)
     events.info("viewer", f"viewer on http://0.0.0.0:{port} (public={public})")
+    events.info("viewer", f"playlist: http://0.0.0.0:{port}/playlist.m3u")
