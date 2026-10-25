@@ -8,7 +8,7 @@ Shows only enabled channels. The grid page polls /api/channels every
 10 s, so newly created channels appear automatically.
 """
 from __future__ import annotations
-
+from channel_utils import enrich_channel
 from pathlib import Path
 
 from flask import (
@@ -28,7 +28,8 @@ DATA_DIR = APP_ROOT / "data"
 
 def _channel_view(ch: dict) -> dict:
     st = supervisor.get_state(ch["id"])
-    return {**ch, **st, "running": bool(st.get("running"))}
+    base = {**ch, **st, "running": bool(st.get("running"))}
+    return enrich_channel(base)
 
 
 def _admin_base() -> str:
@@ -96,7 +97,21 @@ def create_viewer_app() -> Flask:
 
     @app.route("/api/channels")
     def api_channels():
-        return jsonify([_channel_view(c) for c in list_channels() if c.get("enabled")])
+        from epg_utils import now_next
+        result = []
+        for ch in list_channels():
+            if not ch.get("enabled"):
+                continue
+            cv = _channel_view(ch)
+            if ch.get("source_type") == "folder" and cv.get("running"):
+                try:
+                    cv["epg_now"], cv["epg_next"] = now_next(
+                        ch, supervisor.get_state(ch["id"]),
+                    )
+                except Exception:  # noqa: BLE001
+                    cv["epg_now"] = cv["epg_next"] = None
+            result.append(cv)
+        return jsonify(result)
 
     @app.route("/api/channels/<int:cid>")
     def api_channel(cid):

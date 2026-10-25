@@ -1,101 +1,539 @@
 {% extends "viewer_base.html" %}
 {% block title %}{{ channel.name }} — {{ title }}{% endblock %}
 {% block content %}
-<div class="player-wrap">
-  <div class="player-head">
-    <a href="/watch" class="back">← Все каналы</a>
-    <strong>{{ channel.name }}</strong>
-    <span class="badge {{ 'live' if channel.running else 'off' }}"
-          id="status-badge">
-      {{ 'LIVE' if channel.running else 'OFFLINE' }}
-    </span>
+<div class="player-wrap" id="player-wrap">
+  <video id="player" playsinline></video>
+
+  {# === info-overlay: расширенная панель === #}
+  <div id="info-overlay" class="tv-overlay info-overlay hidden">
+    <div class="info-panel">
+      <div class="info-left">
+        <div class="info-number" id="info-number">—</div>
+        <div class="info-name-block">
+          <div class="info-name" id="info-name">{{ channel.name }}</div>
+          <div class="info-meta" id="info-meta"></div>
+        </div>
+      </div>
+      <div class="info-right">
+        <div class="info-line" id="info-uptime"></div>
+        <div class="info-line" id="info-now"></div>
+        <div class="info-line" id="info-next"></div>
+        <div class="info-line info-source" id="info-source"></div>
+        <div class="info-line info-outputs" id="info-outputs"></div>
+      </div>
+    </div>
   </div>
 
-  <div id="state-overlay"></div>
+  {# === hint bar === #}
+  <div id="hint-bar" class="tv-overlay hint-bar hidden">
+    <span class="hint-item">↑↓ каналы</span>
+    <span class="hint-sep">·</span>
+    <span class="hint-item">OK меню</span>
+    <span class="hint-sep">·</span>
+    <span class="hint-item">0–9 прямо</span>
+    <span class="hint-sep">·</span>
+    <span class="hint-item">I инфо</span>
+    <span class="hint-sep">·</span>
+    <span class="hint-item">Esc назад</span>
+  </div>
 
-  {% if channel.running and channel.hls_enabled %}
-    <video id="player" controls autoplay playsinline></video>
-    <div class="player-now muted small" id="now-playing">
-      {% if channel.current_file %}сейчас: {{ channel.current_file }}{% endif %}
+  {# === menu overlay === #}
+  <div id="menu-overlay" class="tv-overlay menu-overlay hidden">
+    <div class="menu-panel">
+      <div class="menu-header">
+        <span>Каналы</span>
+        <span class="menu-close" id="menu-close">✕</span>
+      </div>
+      <div class="menu-grid" id="menu-grid"></div>
+      <div class="menu-help">
+        ↑↓←→ выбор · OK переключить · Esc закрыть
+      </div>
     </div>
-  {% elif channel.running and not channel.hls_enabled %}
-    <div class="flash flash-warn">
-      У канала отключён HLS. Доступен только multicast —
-      откройте в VLC: <code>udp://{{ channel.multicast_addr }}:{{ channel.multicast_port }}</code>
-    </div>
-  {% else %}
-    <div class="flash flash-warn">
-      Канал сейчас не работает. Обратитесь к администратору:
-      <a href="{{ admin_url }}channels">{{ admin_url }}channels</a>
-    </div>
-  {% endif %}
+  </div>
+
+  <div id="toast" class="tv-overlay toast hidden"></div>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.15/dist/hls.min.js"></script>
 <script>
-const CID = {{ channel.id }};
-
 (function () {
+  const INITIAL_CHANNEL_ID = {{ channel.id }};
+  const API_LIST = "/api/channels";
+  const PLAYER_TITLE = {{ title|tojson }};
+
   const video = document.getElementById('player');
-  if (!video) return;
-  const url = "/hls/{{ channel.id }}/index.m3u8";
+  const infoOverlay = document.getElementById('info-overlay');
+  const hintBar = document.getElementById('hint-bar');
+  const menuOverlay = document.getElementById('menu-overlay');
+  const menuGrid = document.getElementById('menu-grid');
+  const toast = document.getElementById('toast');
+  const playerWrap = document.getElementById('player-wrap');
 
-  if (video.canPlayType('application/vnd.apple.mpegurl')) {
-    video.src = url;
-  } else if (window.Hls && Hls.isSupported()) {
-    const hls = new Hls({ lowLatencyMode: false });
-    hls.loadSource(url);
-    hls.attachMedia(video);
-    hls.on(Hls.Events.ERROR, (e, data) => {
-      if (data.fatal) {
-        setTimeout(() => hls.loadSource(url), 3000);
-      }
-    });
-  } else {
-    video.replaceWith(Object.assign(document.createElement('div'), {
-      className: 'flash flash-warn',
-      innerHTML: 'Ваш браузер не поддерживает HLS. Откройте канал в VLC: ' +
-                 '<code>udp://{{ channel.multicast_addr }}:{{ channel.multicast_port }}</code>',
-    }));
+  let channels = [];
+  let currentChannelId = INITIAL_CHANNEL_ID;
+  let hlsInstance = null;
+  let isNativeHls = false;
+  let menuOpen = false;
+  let infoVisible = true;
+  let focusedIndex = 0;
+  let hintTimer = null;
+  let infoTimer = null;
+  let digitBuffer = '';
+  let digitTimer = null;
+  let refreshTimer = null;
+  let loadSeq = 0;
+
+  // navStack — история переключений (для Back)
+  let navStack = [];
+  let navPos = -1;
+
+  isNativeHls = !!video.canPlayType('application/vnd.apple.mpegurl');
+
+  function hlsUrl(channelId) {
+    return '/hls/' + channelId + '/index.m3u8';
   }
-})();
 
-async function pollState() {
-  try {
-    const res = await fetch('/api/channels/' + CID, { cache: 'no-store' });
-    if (!res.ok) return setStopped();
-    const ch = await res.json();
-    if (ch.running) {
-      setLive(ch.current_file);
-    } else {
-      setStopped();
+  function pushNav(ch) {
+    if (navPos >= 0 && navStack[navPos] && navStack[navPos].id === ch.id) {
+      return;
     }
-  } catch (e) { /* network blip, ignore */ }
-}
-
-function setLive(fileName) {
-  document.getElementById('status-badge').className = 'badge live';
-  document.getElementById('status-badge').textContent = 'LIVE';
-  document.getElementById('state-overlay').innerHTML = '';
-  if (fileName) {
-    const el = document.getElementById('now-playing');
-    if (el) el.textContent = 'сейчас: ' + fileName;
+    if (navPos < navStack.length - 1) {
+      navStack = navStack.slice(0, navPos + 1);
+    }
+    navStack.push({ id: ch.id, name: ch.name });
+    if (navStack.length > 30) navStack.shift();
+    navPos = navStack.length - 1;
   }
-}
 
-function setStopped() {
-  document.getElementById('status-badge').className = 'badge off';
-  document.getElementById('status-badge').textContent = 'OFFLINE';
-  document.getElementById('state-overlay').innerHTML =
-    '<div class="flash flash-warn">Канал остановлен. Дождитесь перезапуска.</div>';
-  const v = document.getElementById('player');
-  if (v) { try { v.pause(); } catch (e) {} }
-}
+  function goBackNav() {
+    if (navPos <= 0) return false;
+    navPos -= 1;
+    const target = navStack[navPos];
+    if (!target) return false;
+    loadChannel(target.id, true, { historyMode: true });
+    return true;
+  }
 
-setInterval(pollState, 5000);
+  function showPreparing() {
+    let el = document.getElementById('preparing');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'preparing';
+      el.className = 'tv-overlay preparing-overlay';
+      el.innerHTML = '<div class="preparing-spinner"></div>'
+                   + '<div>Подготовка канала…</div>';
+      playerWrap.appendChild(el);
+    }
+    el.classList.remove('hidden');
+  }
+  function hidePreparing() {
+    const el = document.getElementById('preparing');
+    if (el) el.classList.add('hidden');
+  }
 
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape') window.location = '/watch';
-});
+  function hideVideo() {
+    try { video.pause(); } catch (e) {}
+    video.removeAttribute('src');
+    try { video.load(); } catch (e) {}
+    if (hlsInstance) {
+      try { hlsInstance.detachMedia(); hlsInstance.destroy(); } catch (e) {}
+      hlsInstance = null;
+    }
+  }
+
+  async function waitForManifest(url, channelId, maxWaitMs) {
+    const start = Date.now();
+    let lastStatus = 0;
+    while (Date.now() - start < maxWaitMs) {
+      try {
+        const r = await fetch(url, {
+          method: 'GET',
+          headers: { 'Range': 'bytes=0-0' },
+          cache: 'no-store'
+        });
+        lastStatus = r.status;
+        if (r.ok || r.status === 206) return { ok: true };
+        if (r.status >= 400 && r.status !== 404) {
+          return { ok: false, status: r.status,
+                   reason: 'Сервер вернул HTTP ' + r.status };
+        }
+      } catch (e) {}
+      try {
+        const cr = await fetch('/api/channels/' + channelId, { cache: 'no-store' });
+        if (cr.ok) {
+          const ch = await cr.json();
+          if (!ch.running) {
+            return { ok: false, reason: 'Канал остановлен', status: lastStatus };
+          }
+          if (ch.error) {
+            return { ok: false,
+                     reason: 'Ошибка: ' + String(ch.error).slice(0, 200),
+                     status: lastStatus };
+          }
+        }
+      } catch (e) {}
+      await new Promise(res => setTimeout(res, 1000));
+    }
+    return {
+      ok: false,
+      status: lastStatus,
+      reason: 'HLS-манифест не появился за ' + Math.round(maxWaitMs / 1000) + ' сек'
+    };
+  }
+
+  async function loadChannel(channelId, autoplay, opts) {
+    opts = opts || {};
+    if (!channelId) return;
+    const ch = channels.find(c => c.id === channelId);
+    if (!ch) {
+      showToast('Канал не найден');
+      return;
+    }
+
+    const mySeq = ++loadSeq;
+
+    if (!ch.running) {
+      showToast('Канал не запущен');
+      hideVideo();
+      currentChannelId = channelId;
+      updateInfoPanel();
+      updateMenuSelection();
+      try { window.history.replaceState(null, '', '/watch/' + channelId); } catch (e) {}
+      if (!opts.historyMode) pushNav(ch);
+      return;
+    }
+
+    showPreparing();
+    const url = hlsUrl(channelId);
+    const result = await waitForManifest(url, channelId, 30000);
+
+    if (mySeq !== loadSeq) return;
+
+    if (!result.ok) {
+      hidePreparing();
+      showToast(result.reason || 'Поток не готов');
+      return;
+    }
+
+    currentChannelId = channelId;
+
+    if (isNativeHls) {
+      video.src = url;
+      if (autoplay !== false) video.play().catch(() => {});
+    } else if (window.Hls && Hls.isSupported()) {
+      if (!hlsInstance) {
+        hlsInstance = new Hls({ lowLatencyMode: false });
+        hlsInstance.attachMedia(video);
+        hlsInstance.on(Hls.Events.ERROR, (e, data) => {
+          if (data.fatal) {
+            showToast('Ошибка потока — перезапуск через 3 с');
+            setTimeout(() => loadChannel(currentChannelId), 3000);
+          }
+        });
+      }
+      hlsInstance.loadSource(url);
+      if (autoplay !== false) video.play().catch(() => {});
+    } else {
+      hidePreparing();
+      showToast('HLS не поддерживается браузером');
+      return;
+    }
+
+    hidePreparing();
+
+    try { window.history.replaceState(null, '', '/watch/' + channelId); } catch (e) {}
+
+    if (!opts.historyMode) pushNav(ch);
+
+    updateInfoPanel();
+    updateMenuSelection();
+    document.title = ch.name + ' — ' + PLAYER_TITLE;
+  }
+
+  function currentChannel() {
+    return channels.find(c => c.id === currentChannelId);
+  }
+
+  function updateInfoPanel() {
+    const ch = currentChannel();
+    if (!ch) return;
+
+    document.getElementById('info-number').textContent = ch.channel_number || '—';
+    document.getElementById('info-name').textContent = ch.name;
+
+    const typeLabels = {
+      folder: '📁 папка с видео',
+      iptv: '📡 IPTV-поток',
+      camera: '📹 видеокамера',
+      mosaic: '🎥 мозаика камер',
+      dvb: '🛰️ DVB',
+    };
+    document.getElementById('info-meta').textContent =
+      typeLabels[ch.source_type] || ch.source_type || '';
+
+    const up = document.getElementById('info-uptime');
+    if (ch.running && ch.uptime_human) {
+      const since = ch.started_at_local ? ` · с ${ch.started_at_local}` : '';
+      up.textContent = `⏱ в эфире ${ch.uptime_human}${since}`;
+    } else if (!ch.running) {
+      up.textContent = '⏸ канал остановлен';
+    } else {
+      up.textContent = '';
+    }
+
+    const now = document.getElementById('info-now');
+    const next = document.getElementById('info-next');
+    if (ch.epg_now) {
+      now.textContent = `▶ сейчас: ${ch.epg_now}`;
+    } else if (ch.current_file) {
+      now.textContent = `▶ сейчас: ${ch.current_file}`;
+    } else if (ch.source_type === 'iptv') {
+      now.textContent = '▶ прямой эфир (IPTV)';
+    } else if (ch.source_type === 'camera') {
+      now.textContent = '▶ прямой эфир (камера)';
+    } else if (ch.source_type === 'mosaic') {
+      now.textContent = '▶ прямой эфир (мозаика)';
+    } else {
+      now.textContent = '';
+    }
+    next.textContent = ch.epg_next ? `⏭ далее: ${ch.epg_next}` : '';
+
+    const src = document.getElementById('info-source');
+    if (ch.source_type === 'folder') {
+      const parts = [];
+      if (ch.folder) parts.push(ch.folder);
+      if (ch.folder_files) parts.push(`${ch.folder_files} файлов`);
+      if (ch.folder_size) parts.push(ch.folder_size);
+      src.textContent = parts.length ? '📂 ' + parts.join(' · ') : '';
+    } else if (ch.source_type === 'iptv' && ch.stream_url) {
+      src.textContent = '📡 ' + ch.stream_url;
+    } else if (ch.source_type === 'camera' && ch.stream_url) {
+      src.textContent = '📹 ' + ch.stream_url;
+    } else if (ch.source_type === 'mosaic') {
+      src.textContent = '🎥 мозаика камер';
+    } else {
+      src.textContent = '';
+    }
+
+    const outs = [];
+    if (ch.hls_enabled) outs.push('HLS');
+    if (ch.multicast_enabled && ch.multicast_addr) {
+      outs.push(`UDP ${ch.multicast_addr}:${ch.multicast_port}`);
+    }
+    document.getElementById('info-outputs').textContent =
+      outs.length ? '🔊 ' + outs.join(' · ') : '';
+  }
+
+  function showInfo() {
+    infoVisible = true;
+    infoOverlay.classList.remove('hidden');
+    clearTimeout(infoTimer);
+    infoTimer = setTimeout(() => {
+      if (!menuOpen) {
+        infoOverlay.classList.add('hidden');
+        infoVisible = false;
+      }
+    }, 5000);
+  }
+  function hideInfo() {
+    infoOverlay.classList.add('hidden');
+    infoVisible = false;
+  }
+
+  function showHint() {
+    hintBar.classList.remove('hidden');
+    clearTimeout(hintTimer);
+    hintTimer = setTimeout(() => hintBar.classList.add('hidden'), 5000);
+  }
+
+  let toastTimer = null;
+  function showToast(msg) {
+    toast.textContent = msg;
+    toast.classList.remove('hidden');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toast.classList.add('hidden'), 2500);
+  }
+
+  function channelByNumber(num) {
+    return channels.find(c => c.channel_number === num);
+  }
+  function channelIndex(cid) {
+    return channels.findIndex(c => c.id === cid);
+  }
+  function switchByOffset(delta) {
+    if (!channels.length) return;
+    const idx = channelIndex(currentChannelId);
+    const n = channels.length;
+    const next = ((idx + delta) % n + n) % n;
+    loadChannel(channels[next].id);
+  }
+
+  function openMenu() {
+    menuOpen = true;
+    menuOverlay.classList.remove('hidden');
+    hideInfo();
+    renderMenu();
+    focusedIndex = Math.max(0, channelIndex(currentChannelId));
+    updateMenuSelection();
+  }
+  function closeMenu() {
+    menuOpen = false;
+    menuOverlay.classList.add('hidden');
+  }
+
+  function renderMenu() {
+    menuGrid.innerHTML = channels.map((ch, i) => `
+      <div class="menu-card ${ch.id === currentChannelId ? 'current' : ''}"
+           data-index="${i}" data-id="${ch.id}">
+        <div class="menu-num">${ch.channel_number || ''}</div>
+        <div class="menu-name">${escapeHtml(ch.name)}</div>
+        <div class="menu-status ${ch.running ? 'live' : 'off'}">
+          ${ch.running ? 'LIVE' : 'OFFLINE'}
+        </div>
+        ${ch.epg_now
+          ? `<div class="menu-now">${escapeHtml(ch.epg_now)}</div>` : ''}
+      </div>
+    `).join('');
+  }
+
+  function updateMenuSelection() {
+    if (!menuOpen) return;
+    const cards = menuGrid.querySelectorAll('.menu-card');
+    cards.forEach((c, i) => c.classList.toggle('focused', i === focusedIndex));
+    const focused = cards[focusedIndex];
+    if (focused) focused.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+  function menuMove(delta) {
+    const n = channels.length;
+    if (!n) return;
+    focusedIndex = ((focusedIndex + delta) % n + n) % n;
+    updateMenuSelection();
+  }
+  function menuActivate() {
+    const ch = channels[focusedIndex];
+    if (!ch) return;
+    closeMenu();
+    loadChannel(ch.id);
+    showInfo();
+  }
+  function escapeHtml(s) {
+    return String(s || '').replace(/[&<>"']/g, c => ({
+      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+    })[c]);
+  }
+
+  function handleDigit(d) {
+    digitBuffer += d;
+    showToast('→ ' + digitBuffer);
+    clearTimeout(digitTimer);
+    digitTimer = setTimeout(() => {
+      const num = parseInt(digitBuffer, 10);
+      digitBuffer = '';
+      const ch = channelByNumber(num);
+      if (ch) { loadChannel(ch.id); showInfo(); }
+      else { showToast('Канал ' + num + ' не найден'); }
+    }, 1500);
+    if (digitBuffer.length >= 2) {
+      const num2 = parseInt(digitBuffer, 10);
+      const found = channelByNumber(num2);
+      if (found) {
+        clearTimeout(digitTimer);
+        digitBuffer = '';
+        loadChannel(found.id);
+        showInfo();
+      }
+    }
+  }
+
+  function handleAction(action) {
+    showHint();
+
+    if (action.startsWith('digit:')) {
+      handleDigit(action.slice(6));
+      return;
+    }
+
+    if (action === 'up') {
+      if (menuOpen) menuMove(-1);
+      else { switchByOffset(-1); showInfo(); }
+    } else if (action === 'down') {
+      if (menuOpen) menuMove(1);
+      else { switchByOffset(1); showInfo(); }
+    } else if (action === 'left') {
+      if (menuOpen) menuMove(-1);
+    } else if (action === 'right') {
+      if (menuOpen) menuMove(1);
+    } else if (action === 'ok') {
+      if (menuOpen) menuActivate();
+      else openMenu();
+    } else if (action === 'back') {
+      if (menuOpen) {
+        closeMenu();
+      } else if (!goBackNav()) {
+        window.location.href = '/watch';
+      }
+    } else if (action === 'info') {
+      if (infoVisible) hideInfo();
+      else showInfo();
+    }
+  }
+
+  function classifyKey(e) {
+    const key = e.key || '';
+    const code = e.keyCode || 0;
+    if (key === 'ArrowUp'    || code === 38) return 'up';
+    if (key === 'ArrowDown'  || code === 40) return 'down';
+    if (key === 'ArrowLeft'  || code === 37) return 'left';
+    if (key === 'ArrowRight' || code === 39) return 'right';
+    if (key === 'Enter'      || code === 13 || code === 29443) return 'ok';
+    if (key === 'Escape'     || code === 27 || code === 461 || code === 10009) return 'back';
+    if (key === 'i' || key === 'I' || code === 73) return 'info';
+    if (key >= '0' && key <= '9') return 'digit:' + key;
+    if (code >= 48 && code <= 57) return 'digit:' + String.fromCharCode(code);
+    if (code >= 96 && code <= 105) return 'digit:' + String.fromCharCode(code - 48);
+    return null;
+  }
+
+  document.addEventListener('keydown', (e) => {
+    const t = e.target;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return;
+    const action = classifyKey(e);
+    if (action) {
+      e.preventDefault();
+      handleAction(action);
+    }
+  });
+
+  menuGrid.addEventListener('click', (e) => {
+    const card = e.target.closest('.menu-card');
+    if (!card) return;
+    focusedIndex = parseInt(card.dataset.index, 10);
+    menuActivate();
+  });
+  document.getElementById('menu-close').addEventListener('click', closeMenu);
+
+  video.addEventListener('click', () => {
+    if (!menuOpen) openMenu();
+  });
+
+  async function refreshChannels() {
+    try {
+      const r = await fetch(API_LIST, { cache: 'no-store' });
+      if (!r.ok) return;
+      channels = await r.json();
+      if (menuOpen) renderMenu();
+      updateInfoPanel();
+    } catch (e) {}
+  }
+
+  async function init() {
+    await refreshChannels();
+    await loadChannel(INITIAL_CHANNEL_ID, true);
+    showInfo();
+    refreshTimer = setInterval(refreshChannels, 30000);
+  }
+
+  init();
+})();
 </script>
 {% endblock %}
