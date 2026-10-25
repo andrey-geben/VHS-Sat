@@ -1,10 +1,12 @@
 """VHS-Sat — satellite TV relay server (Flask admin front-end).
 
-Viewer runs on a separate port (default 8301) via viewer.py.
+Production mode uses waitress WSGI. Viewer runs on a separate port
+(default 8301) via waitress in a background thread.
 """
 from __future__ import annotations
 
 import platform
+import shutil
 import threading
 from pathlib import Path
 
@@ -100,8 +102,6 @@ def _validate_channel_payload(data: dict, exclude_id: int | None = None) -> str 
             return f"этот URL уже используется каналом «{dup[0]['name']}» (id={dup[0]['id']})"
 
     elif source_type == "mosaic":
-        # no folder, no stream_url — cameras live in mosaic_sources and are
-        # added after the container channel is created
         pass
 
     else:
@@ -507,7 +507,6 @@ def create_app() -> Flask:
                 data["stream_user"] = request.form.get("stream_user", "").strip() or None
             if request.form.get("stream_pass"):
                 data["stream_pass"] = request.form.get("stream_pass", "").strip() or None
-        # for mosaic: only fields above (name, outputs, codec) — cameras are separate
 
         err = _validate_channel_payload({**ch, **data}, exclude_id=cid)
         if err:
@@ -556,6 +555,54 @@ def create_app() -> Flask:
         supervisor.stop(cid)
         events.info("channels", f"channel {cid} stopped")
         flash(f"Канал «{ch['name']}» остановлен", "info")
+        return redirect(url_for("channels_page"))
+
+    @app.route("/channels/clear", methods=["POST"])
+    @login_required
+    def channels_clear():
+        type_filter = (request.form.get("type") or "").strip().lower()
+
+        all_channels = list_channels()
+        if type_filter in ("folder", "iptv", "camera", "mosaic"):
+            to_delete = [c for c in all_channels
+                         if c.get("source_type") == type_filter]
+        else:
+            to_delete = all_channels
+
+        if not to_delete:
+            flash("Нечего удалять", "warn")
+            return redirect(url_for("channels_page"))
+
+        removed_ids = []
+        for ch in to_delete:
+            cid = ch["id"]
+            try:
+                supervisor.stop(cid)
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                delete_channel(cid)
+                removed_ids.append(cid)
+            except Exception as exc:  # noqa: BLE001
+                events.warn("channels",
+                            f"clear: failed to delete channel {cid}: {exc}")
+                continue
+
+            hls_dir = DATA_DIR / "hls" / str(cid)
+            if hls_dir.is_dir():
+                shutil.rmtree(hls_dir, ignore_errors=True)
+
+            pl = DATA_DIR / "playlists" / f"channel_{cid}.txt"
+            if pl.exists():
+                try:
+                    pl.unlink()
+                except OSError:
+                    pass
+
+        events.info("channels",
+                    f"cleared {len(removed_ids)} channels "
+                    f"(filter={type_filter or 'all'})")
+        flash(f"Удалено {len(removed_ids)} канал(ов)", "info")
         return redirect(url_for("channels_page"))
 
     # ---------- mosaic camera management ----------
@@ -927,15 +974,27 @@ def _safe(fn, default):
 
 
 def _run_viewer() -> None:
-    from werkzeug.serving import make_server
-    from viewer import create_viewer_app, _log_startup
+    try:
+        from viewer import create_viewer_app
 
-    port = int(config.get("viewer", "port", default=8301))
-    host = config.get("server", "host", default="0.0.0.0")
-    viewer_app = create_viewer_app()
-    server = make_server(host, port, viewer_app, threaded=True)
-    _log_startup()
-    server.serve_forever()
+        port = int(config.get("viewer", "port", default=8301))
+        host = config.get("server", "host", default="0.0.0.0")
+        threads = int(config.get("server", "threads", default=8))
+        viewer_app = create_viewer_app()
+
+        try:
+            from waitress import serve
+            events.info("viewer", f"waitress viewer on {host}:{port} (threads={threads})")
+            serve(viewer_app, host=host, port=port, threads=threads,
+                  ident="VHS-Sat-viewer", clear_untrusted_proxy_headers=True)
+        except ImportError:
+            from werkzeug.serving import make_server
+            events.warn("viewer", "waitress not installed — falling back to werkzeug")
+            server = make_server(host, port, viewer_app, threaded=True)
+            server.serve_forever()
+    except Exception as exc:  # noqa: BLE001
+        events.error("viewer", f"viewer failed to start: {exc}")
+        print(f" * FATAL: viewer (port 8301) failed to start: {exc}")
 
 
 app = create_app()
@@ -956,9 +1015,25 @@ if __name__ == "__main__":
     else:
         events.info("server", "viewer disabled (viewer.enabled=false)")
 
-    app.run(
-        host=config.get("server", "host", default="0.0.0.0"),
-        port=int(config.get("server", "port", default=8300)),
-        debug=bool(config.get("server", "debug", default=False)),
-        threaded=True,
-    )
+    host = config.get("server", "host", default="0.0.0.0")
+    port = int(config.get("server", "port", default=8300))
+    debug = bool(config.get("server", "debug", default=False))
+    threads = int(config.get("server", "threads", default=8))
+
+    if debug:
+        events.info("server", f"debug mode — Flask dev server on {host}:{port}")
+        app.run(host=host, port=port, debug=True, threaded=True)
+    else:
+        try:
+            from waitress import serve
+            events.info("server", f"waitress admin on {host}:{port} (threads={threads})")
+            print(f" * Production server (waitress) on http://{host}:{port}")
+            print(f" * Threads: {threads}")
+            print(" * Press CTRL+C to quit")
+            serve(app, host=host, port=port, threads=threads,
+                  ident="VHS-Sat", clear_untrusted_proxy_headers=True)
+        except ImportError:
+            events.warn("server", "waitress not installed — falling back to Flask dev server")
+            print(" * WARNING: waitress not installed, using Flask dev server")
+            print(" * Install: pip install waitress")
+            app.run(host=host, port=port, debug=False, threaded=True)

@@ -22,6 +22,7 @@ DEFAULTS: dict[str, Any] = {
         "title": "VHS-Sat",
         "host": "0.0.0.0",
         "port": 8300,
+        "threads": 8,
         "debug": False,
         "secret_key": "",
     },

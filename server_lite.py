@@ -1,14 +1,16 @@
-"""VHS-Sat Lite — Windows-only build. Local folder channels + IPTV + cameras.
+"""VHS-Sat Lite — Windows-only build. Local folder channels + IPTV + cameras + mosaic.
 
 No DVB, no CAM, no hardware probing. Everything else identical to the
 full server: two ports (admin 8300, viewer 8301), SQLite, events,
 ffmpeg-based HLS + multicast streaming, EPG for folder channels.
 
-This is the PyInstaller entry point for VHS-Sat-Lite.exe.
+Production mode uses waitress WSGI. This is the PyInstaller entry point
+for VHS-Sat-Lite.exe.
 """
 from __future__ import annotations
 
 import platform
+import shutil
 import threading
 import webbrowser
 from pathlib import Path
@@ -22,9 +24,10 @@ from auth import auth_bp, current_user, hash_password, login_required
 from channel_utils import enrich_channel
 from config import config
 from db import (
-    create_channel, delete_channel, find_channel_by_number,
-    find_channels_by_folder, find_channels_by_stream_url, get_channel,
-    init_db, list_channels, next_free_number, update_channel,
+    add_mosaic_source, create_channel, delete_channel, delete_mosaic_source,
+    find_channel_by_number, find_channels_by_folder, find_channels_by_stream_url,
+    get_channel, get_mosaic_source, init_db, list_channels, list_mosaic_sources,
+    move_mosaic_source, next_free_number, update_channel, update_mosaic_source,
 )
 from event_writer import events
 from frozen_utils import APP_ROOT, RESOURCE_ROOT, detect_lite_tools
@@ -86,6 +89,9 @@ def _validate_channel_payload(data: dict, exclude_id: int | None = None) -> str 
         dup = [d for d in dup if d["id"] != exclude_id]
         if dup:
             return f"этот URL уже используется каналом «{dup[0]['name']}» (id={dup[0]['id']})"
+
+    elif source_type == "mosaic":
+        pass
 
     else:
         return f"неизвестный source_type: {source_type}"
@@ -207,10 +213,11 @@ def create_lite_app() -> Flask:
             "folder": sum(1 for c in all_view if c.get("source_type") == "folder"),
             "iptv": sum(1 for c in all_view if c.get("source_type") == "iptv"),
             "camera": sum(1 for c in all_view if c.get("source_type") == "camera"),
+            "mosaic": sum(1 for c in all_view if c.get("source_type") == "mosaic"),
         }
 
         type_filter = (request.args.get("type") or "").strip().lower()
-        if type_filter in ("folder", "iptv", "camera"):
+        if type_filter in ("folder", "iptv", "camera", "mosaic"):
             view = [c for c in all_view if c.get("source_type") == type_filter]
         else:
             type_filter = ""
@@ -240,17 +247,20 @@ def create_lite_app() -> Flask:
     @app.route("/channels/new/<source_type>")
     @login_required
     def channel_new_form(source_type):
-        if source_type not in ("folder", "iptv", "camera"):
+        if source_type not in ("folder", "iptv", "camera", "mosaic"):
             abort(404)
         return render_template("channel_new.html", form_type=source_type)
 
     @app.route("/channels/create", methods=["POST"])
     @login_required
     def channels_create():
+        source_type = request.form.get("source_type", "folder").lower()
+        if source_type not in ("folder", "mosaic"):
+            source_type = "folder"
         data = {
             "name": request.form.get("name", "").strip(),
-            "source_type": "folder",
-            "folder": request.form.get("folder", "").strip(),
+            "source_type": source_type,
+            "folder": request.form.get("folder", "").strip() or None,
             "rotation": request.form.get("rotation", "random"),
             "reshuffle_on_loop": 1 if _to_bool(request.form.get("reshuffle_on_loop")) else 0,
             "file_extensions": request.form.get("file_extensions", "mp4,mkv,avi,ts,mov,m4v,webm"),
@@ -278,8 +288,11 @@ def create_lite_app() -> Flask:
         except Exception as exc:  # noqa: BLE001
             flash(f"Ошибка создания канала: {exc}", "error")
             return redirect(url_for("channels_page"))
-        events.info("channels", f"created channel {cid} '{data['name']}'")
+        events.info("channels", f"created {source_type} channel {cid} '{data['name']}'")
         flash(f"Канал «{data['name']}» создан", "info")
+        if source_type == "mosaic":
+            flash("Добавьте камеры на странице редактирования канала", "info")
+            return redirect(url_for("channel_edit_form", cid=cid))
         return redirect(url_for("channels_page"))
 
     @app.route("/channels/create-stream", methods=["POST"])
@@ -416,7 +429,12 @@ def create_lite_app() -> Flask:
         ch = get_channel(cid)
         if not ch:
             abort(404)
-        return render_template("channel_edit.html", channel=_channel_view(ch))
+        cams = []
+        if ch.get("source_type") == "mosaic":
+            cams = list_mosaic_sources(cid)
+        return render_template("channel_edit.html",
+                               channel=_channel_view(ch),
+                               mosaic_cameras=cams)
 
     @app.route("/channels/<int:cid>/edit", methods=["POST"])
     @login_required
@@ -442,7 +460,7 @@ def create_lite_app() -> Flask:
         }
         if st == "folder":
             data["folder"] = request.form.get("folder", "").strip() or ch["folder"]
-        else:
+        elif st in ("iptv", "camera"):
             data["stream_url"] = (request.form.get("stream_url", "").strip()
                                   or ch["stream_url"])
             if request.form.get("stream_user") is not None:
@@ -498,6 +516,136 @@ def create_lite_app() -> Flask:
         events.info("channels", f"channel {cid} stopped")
         flash(f"Канал «{ch['name']}» остановлен", "info")
         return redirect(url_for("channels_page"))
+
+    @app.route("/channels/clear", methods=["POST"])
+    @login_required
+    def channels_clear():
+        type_filter = (request.form.get("type") or "").strip().lower()
+
+        all_channels = list_channels()
+        if type_filter in ("folder", "iptv", "camera", "mosaic"):
+            to_delete = [c for c in all_channels
+                         if c.get("source_type") == type_filter]
+        else:
+            to_delete = all_channels
+
+        if not to_delete:
+            flash("Нечего удалять", "warn")
+            return redirect(url_for("channels_page"))
+
+        removed_ids = []
+        for ch in to_delete:
+            cid = ch["id"]
+            try:
+                supervisor.stop(cid)
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                delete_channel(cid)
+                removed_ids.append(cid)
+            except Exception as exc:  # noqa: BLE001
+                events.warn("channels",
+                            f"clear: failed to delete channel {cid}: {exc}")
+                continue
+
+            hls_dir = DATA_DIR / "hls" / str(cid)
+            if hls_dir.is_dir():
+                shutil.rmtree(hls_dir, ignore_errors=True)
+
+            pl = DATA_DIR / "playlists" / f"channel_{cid}.txt"
+            if pl.exists():
+                try:
+                    pl.unlink()
+                except OSError:
+                    pass
+
+        events.info("channels",
+                    f"cleared {len(removed_ids)} channels "
+                    f"(filter={type_filter or 'all'})")
+        flash(f"Удалено {len(removed_ids)} канал(ов)", "info")
+        return redirect(url_for("channels_page"))
+
+    # ---------- mosaic camera management ----------
+    @app.route("/channels/<int:cid>/mosaic/add", methods=["POST"])
+    @login_required
+    def mosaic_add_camera(cid):
+        ch = get_channel(cid)
+        if not ch or ch.get("source_type") != "mosaic":
+            abort(404)
+        url = (request.form.get("stream_url") or "").strip()
+        if not url.startswith(("http://", "https://", "rtsp://", "rtmp://")):
+            flash("URL камеры должен начинаться с http://, https://, rtsp:// или rtmp://",
+                  "error")
+            return redirect(url_for("channel_edit_form", cid=cid))
+        if len(list_mosaic_sources(cid)) >= 9:
+            flash("Максимум 9 камер в мозаике", "error")
+            return redirect(url_for("channel_edit_form", cid=cid))
+        add_mosaic_source(cid, {
+            "stream_url": url,
+            "stream_user": request.form.get("stream_user", "").strip() or None,
+            "stream_pass": request.form.get("stream_pass", "").strip() or None,
+            "label": request.form.get("label", "").strip() or None,
+        })
+        was_running = supervisor.get_state(cid).get("running")
+        if was_running:
+            supervisor.stop(cid)
+            supervisor.start(get_channel(cid))
+        events.info("mosaic", f"camera added to channel {cid}")
+        flash("Камера добавлена", "info")
+        return redirect(url_for("channel_edit_form", cid=cid))
+
+    @app.route("/channels/<int:cid>/mosaic/<int:sid>/update", methods=["POST"])
+    @login_required
+    def mosaic_update_camera(cid, sid):
+        ch = get_channel(cid)
+        src = get_mosaic_source(sid)
+        if not ch or not src or src["channel_id"] != cid:
+            abort(404)
+        data = {
+            "label": request.form.get("label", "").strip() or None,
+            "stream_url": request.form.get("stream_url", "").strip() or src["stream_url"],
+            "stream_user": request.form.get("stream_user", "").strip() or None,
+        }
+        if request.form.get("stream_pass"):
+            data["stream_pass"] = request.form.get("stream_pass").strip() or None
+        update_mosaic_source(sid, data)
+        was_running = supervisor.get_state(cid).get("running")
+        if was_running:
+            supervisor.stop(cid)
+            supervisor.start(get_channel(cid))
+        flash("Камера обновлена", "info")
+        return redirect(url_for("channel_edit_form", cid=cid))
+
+    @app.route("/channels/<int:cid>/mosaic/<int:sid>/remove", methods=["POST"])
+    @login_required
+    def mosaic_remove_camera(cid, sid):
+        ch = get_channel(cid)
+        src = get_mosaic_source(sid)
+        if not ch or not src or src["channel_id"] != cid:
+            abort(404)
+        delete_mosaic_source(sid)
+        was_running = supervisor.get_state(cid).get("running")
+        if was_running:
+            supervisor.stop(cid)
+            supervisor.start(get_channel(cid))
+        events.info("mosaic", f"camera {sid} removed from channel {cid}")
+        flash("Камера удалена", "info")
+        return redirect(url_for("channel_edit_form", cid=cid))
+
+    @app.route("/channels/<int:cid>/mosaic/<int:sid>/move/<direction>", methods=["POST"])
+    @login_required
+    def mosaic_move_camera(cid, sid, direction):
+        ch = get_channel(cid)
+        src = get_mosaic_source(sid)
+        if not ch or not src or src["channel_id"] != cid:
+            abort(404)
+        if direction in ("up", "down"):
+            move_mosaic_source(sid, direction)
+            was_running = supervisor.get_state(cid).get("running")
+            if was_running:
+                supervisor.stop(cid)
+                supervisor.start(get_channel(cid))
+        return redirect(url_for("channel_edit_form", cid=cid))
 
     # ---------- events ----------
     @app.route("/events")
@@ -657,15 +805,27 @@ def create_lite_app() -> Flask:
 
 
 def _run_viewer() -> None:
-    from werkzeug.serving import make_server
-    from viewer import create_viewer_app
+    try:
+        from viewer import create_viewer_app
 
-    port = int(config.get("viewer", "port", default=8301))
-    host = config.get("server", "host", default="0.0.0.0")
-    viewer_app = create_viewer_app()
-    server = make_server(host, port, viewer_app, threaded=True)
-    events.info("viewer", f"viewer on http://0.0.0.0:{port}")
-    server.serve_forever()
+        port = int(config.get("viewer", "port", default=8301))
+        host = config.get("server", "host", default="0.0.0.0")
+        threads = int(config.get("server", "threads", default=8))
+        viewer_app = create_viewer_app()
+
+        try:
+            from waitress import serve
+            events.info("viewer", f"waitress viewer on {host}:{port} (threads={threads})")
+            serve(viewer_app, host=host, port=port, threads=threads,
+                  ident="VHS-Sat-viewer", clear_untrusted_proxy_headers=True)
+        except ImportError:
+            from werkzeug.serving import make_server
+            events.warn("viewer", "waitress not installed — falling back to werkzeug")
+            server = make_server(host, port, viewer_app, threaded=True)
+            server.serve_forever()
+    except Exception as exc:  # noqa: BLE001
+        events.error("viewer", f"viewer failed to start: {exc}")
+        print(f" * FATAL: viewer (port 8301) failed to start: {exc}")
 
 
 app = create_lite_app()
@@ -683,13 +843,26 @@ def main() -> None:
         ).start()
 
     admin_port = int(config.get("server", "port", default=8300))
+    host = config.get("server", "host", default="0.0.0.0")
+    threads = int(config.get("server", "threads", default=8))
 
     if config.get("server", "open_browser_on_start", default=True):
         threading.Timer(
             1.5, lambda: webbrowser.open(f"http://localhost:{admin_port}/"),
         ).start()
 
-    app.run(host="0.0.0.0", port=admin_port, debug=False, threaded=True)
+    try:
+        from waitress import serve
+        events.info("server", f"waitress admin on {host}:{admin_port} (threads={threads})")
+        print(f" * Production server (waitress) on http://{host}:{admin_port}")
+        print(f" * Threads: {threads}")
+        print(" * Press CTRL+C to quit")
+        serve(app, host=host, port=admin_port, threads=threads,
+              ident="VHS-Sat-Lite", clear_untrusted_proxy_headers=True)
+    except ImportError:
+        events.warn("server", "waitress not installed — falling back to Flask dev server")
+        print(" * WARNING: waitress not installed, using Flask dev server")
+        app.run(host=host, port=admin_port, debug=False, threaded=True)
 
 
 if __name__ == "__main__":

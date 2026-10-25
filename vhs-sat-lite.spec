@@ -12,6 +12,8 @@ datas = [
 hiddenimports = [
     "jinja2", "werkzeug", "flask", "yaml", "sqlite3", "hls",
     "jinja2.ext",
+    "waitress", "waitress.server", "waitress.task",
+    "waitress.adjustments", "waitress.channel",
 ]
 
 excludes = [
