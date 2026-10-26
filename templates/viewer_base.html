@@ -17,8 +17,13 @@
   {% block content %}{% endblock %}
   <footer class="viewer-foot muted small">
     VHS-Sat · viewer · порт {{ viewer_port }} ·
-    <a href="/about" style="color:#4aa3e0">О программе</a> ·
-    {% if playlist_public %}<a href="/playlist.m3u" style="color:#4aa3e0">📻 плейлист</a>{% endif %}
+    <a href="/about" style="color:#4aa3e0">О программе</a>
+    {% if playlist_public %}
+      · <a href="/playlist.m3u" style="color:#4aa3e0">📻 плейлист</a>
+    {% endif %}
+    {% if has_apk %}
+      · <a href="/download" style="color:#4aa3e0">📱 APK для Android TV</a>
+    {% endif %}
   </footer>
 </body>
 </html>

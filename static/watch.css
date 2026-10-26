@@ -307,3 +307,86 @@ body.viewer-body:hover { cursor: default; }
   .ss-meta { font-size: 0.85rem; }
   .ss-hint { font-size: 0.75rem; margin-top: 2rem; }
 }
+/* ===== Android APK download page ===== */
+.download-viewer .viewer-card {
+  background: #1a2230; border-radius: 10px;
+  padding: 1.4rem 1.6rem; margin-bottom: 1rem;
+}
+.download-viewer .back { color: #4aa3e0; text-decoration: none; }
+.download-viewer h2 { margin-top: 0; font-size: 1.15rem; color: #e8eef2; }
+.download-viewer h1 { margin: 0; }
+
+.download-info {
+  display: flex; gap: 1rem; align-items: center;
+  margin-bottom: 1.2rem;
+}
+.download-icon { font-size: 3rem; line-height: 1; }
+.download-title { font-size: 1.4rem; font-weight: 700; }
+
+.download-btn {
+  display: inline-block;
+  background: #2d8a4a; color: #fff;
+  padding: 0.7rem 1.5rem; border-radius: 8px;
+  text-decoration: none; font-weight: 600; font-size: 1.05rem;
+  transition: background .12s;
+}
+.download-btn:hover { background: #236f3a; color: #fff; }
+
+.download-steps {
+  padding-left: 1.4rem; line-height: 1.7; color: #e8eef2;
+}
+.download-steps li { margin-bottom: 0.8rem; }
+.download-steps a { color: #4aa3e0; }
+
+.download-url {
+  background: rgba(255,255,255,.05);
+  padding: 0.5rem 0.8rem; border-radius: 6px;
+  margin: 0.4rem 0; font-family: monospace;
+  word-break: break-all; color: #a8bccb;
+}
+
+.download-qr-card { text-align: center; }
+.download-qr {
+  display: inline-block;
+  background: #fff; padding: 1rem;
+  border-radius: 8px; margin: 1rem 0;
+}
+.download-qr img { display: block; }
+
+.download-code {
+  background: rgba(0,0,0,.4);
+  padding: 0.8rem 1rem; border-radius: 6px;
+  font-size: 0.9rem; overflow-x: auto;
+  color: #a8bccb; margin: 0.6rem 0 0 0;
+}
+
+/* ===== APK banner on /watch ===== */
+.download-banner {
+  display: flex; align-items: center; gap: 1rem;
+  background: linear-gradient(135deg, #1a2230, #24304a);
+  border: 1px solid #2a3d4a;
+  border-radius: 12px; padding: 1rem 1.4rem;
+  text-decoration: none; color: #e8eef2;
+  margin-top: 1.5rem;
+  transition: transform .12s, box-shadow .12s, border-color .12s;
+}
+.download-banner:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(0,0,0,.3);
+  border-color: #4aa3e0;
+  color: #e8eef2;
+}
+.download-banner-icon { font-size: 2rem; line-height: 1; flex-shrink: 0; }
+.download-banner-text { flex: 1; min-width: 0; }
+.download-banner-text strong {
+  display: block; margin-bottom: 0.2rem; font-size: 1.05rem;
+}
+.download-banner-text .muted { font-size: 0.88rem; }
+.download-banner-arrow {
+  font-size: 1.4rem; color: #4aa3e0; flex-shrink: 0;
+}
+
+@media (max-width: 700px) {
+  .download-info { flex-direction: column; align-items: flex-start; }
+  .download-banner { flex-direction: column; text-align: center; }
+}

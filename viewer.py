@@ -6,10 +6,17 @@ same SECRET_KEY (cookies are port-agnostic on the same host).
 
 Serves /playlist.m3u(.m3u8) — a live M3U playlist of all running
 channels. If viewer.playlist_token is set, requires ?token=XXX.
+
+Serves /download — landing page for the Android TV APK with a QR code
+and installation instructions. The APK is read from downloads/*.apk
+(newest wins) at the project root (or next to the .exe in frozen mode).
 """
 from __future__ import annotations
 
+import base64
 import hmac
+import io
+from pathlib import Path
 
 from flask import (
     Flask, abort, jsonify, redirect, render_template, request,
@@ -24,6 +31,7 @@ from supervisor import supervisor
 
 
 DATA_DIR = APP_ROOT / "data"
+DOWNLOAD_DIR = APP_ROOT / "downloads"
 
 GROUP_TITLES = {
     "folder": "Папки",
@@ -32,6 +40,8 @@ GROUP_TITLES = {
     "mosaic": "Мозаики",
     "dvb": "DVB",
 }
+
+APK_MIME = "application/vnd.android.package-archive"
 
 
 def _channel_view(ch: dict) -> dict:
@@ -84,6 +94,40 @@ def _generate_m3u(channels: list[dict], host: str, viewer_port: int, prefer: str
     return "\n".join(lines) + "\n"
 
 
+def _latest_apk() -> Path | None:
+    if not DOWNLOAD_DIR.is_dir():
+        return None
+    apks = [p for p in DOWNLOAD_DIR.glob("*.apk") if p.is_file()]
+    if not apks:
+        return None
+    apks.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return apks[0]
+
+
+def _make_qr_data_uri(text: str) -> str | None:
+    try:
+        import qrcode
+    except ImportError:
+        events.warn("download", "qrcode not installed — QR unavailable")
+        return None
+    try:
+        qr = qrcode.QRCode(
+            version=None,
+            box_size=10,
+            border=2,
+            error_correction=qrcode.constants.ERROR_CORRECT_M,
+        )
+        qr.add_data(text)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color="black", back_color="white")
+        buf = io.BytesIO()
+        img.save(buf, format="PNG")
+        return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+    except Exception as exc:  # noqa: BLE001
+        events.warn("download", f"QR generation failed: {exc}")
+        return None
+
+
 def create_viewer_app() -> Flask:
     app = Flask(
         __name__,
@@ -101,12 +145,14 @@ def create_viewer_app() -> Flask:
             "admin_url": _admin_base(),
             "about": config.get("about", default={}),
             "playlist_public": not token_set,
+            "has_apk": _latest_apk() is not None,
         }
 
     @app.before_request
     def _gate():
-        # playlist must remain reachable for TV apps even if viewer needs auth
-        if request.endpoint == "playlist_m3u":
+        # playlist and download must remain reachable for TV apps
+        if request.endpoint in ("playlist_m3u", "download_page",
+                                "download_apk", "download_file"):
             return None
         r = _auth_redirect()
         if r:
@@ -137,6 +183,7 @@ def create_viewer_app() -> Flask:
             abort(404)
         return send_from_directory(hls_root, filename, mimetype=None)
 
+    # ---------- playlist ----------
     @app.route("/playlist.m3u8")
     @app.route("/playlist.m3u")
     def playlist_m3u():
@@ -144,7 +191,6 @@ def create_viewer_app() -> Flask:
         if required_token:
             provided = request.args.get("token", "")
             if not hmac.compare_digest(provided, required_token):
-                # 404, not 401 — don't reveal that the playlist exists
                 abort(404)
 
         host = request.host.split(":")[0]
@@ -187,6 +233,74 @@ def create_viewer_app() -> Flask:
             },
         )
 
+    # ---------- android APK download ----------
+    @app.route("/download")
+    def download_page():
+        apk = _latest_apk()
+        host = request.host.split(":")[0]
+        viewer_port = config.get("viewer", "port", default=8301)
+        admin_port = config.get("server", "port", default=8300)
+        download_url = f"http://{host}:{viewer_port}/download/apk"
+        server_url = f"http://{host}:{viewer_port}"
+        admin_url = f"http://{host}:{admin_port}"
+
+        qr_data_uri = None
+        if apk:
+            qr_data_uri = _make_qr_data_uri(download_url)
+            try:
+                size_mb = round(apk.stat().st_size / 1024 / 1024, 1)
+            except OSError:
+                size_mb = 0
+            events.info("download", f"APK page served: {apk.name} ({size_mb} MB)")
+        else:
+            size_mb = 0
+
+        return render_template(
+            "download.html",
+            apk=apk,
+            apk_size_mb=size_mb,
+            download_url=download_url,
+            server_url=server_url,
+            admin_url=admin_url,
+            qr_data_uri=qr_data_uri,
+        )
+
+    @app.route("/download/apk")
+    def download_apk():
+        apk = _latest_apk()
+        if not apk:
+            abort(404)
+        events.info("download", f"APK served: {apk.name}")
+        return send_from_directory(
+            str(apk.parent),
+            apk.name,
+            mimetype=APK_MIME,
+            as_attachment=True,
+            download_name="vhs-sat-tv.apk",
+        )
+
+    @app.route("/download/file/<path:filename>")
+    def download_file(filename):
+        if not DOWNLOAD_DIR.is_dir():
+            abort(404)
+        # block path traversal
+        target = (DOWNLOAD_DIR / filename).resolve()
+        try:
+            target.relative_to(DOWNLOAD_DIR.resolve())
+        except ValueError:
+            abort(404)
+        if not target.is_file() or not target.name.lower().endswith(".apk"):
+            abort(404)
+        events.info("download", f"APK served by name: {target.name}")
+        return send_from_directory(
+            str(target.parent),
+            target.name,
+            mimetype=APK_MIME,
+            as_attachment=True,
+            download_name=target.name,
+        )
+
+    # ---------- API ----------
     @app.route("/api/channels")
     def api_channels():
         from epg_utils import now_next
@@ -219,9 +333,15 @@ def _log_startup():
     port = config.get("viewer", "port", default=8301)
     public = config.get("viewer", "public", default=True)
     token_set = bool(config.get("viewer", "playlist_token", default="") or "")
+    apk = _latest_apk()
     events.info("viewer", f"viewer on http://0.0.0.0:{port} (public={public})")
     events.info(
         "viewer",
         f"playlist: http://0.0.0.0:{port}/playlist.m3u "
         f"(token {'set' if token_set else 'not set'})",
+    )
+    events.info(
+        "viewer",
+        f"apk download: http://0.0.0.0:{port}/download "
+        f"({apk.name if apk else 'no APK in downloads/'})",
     )

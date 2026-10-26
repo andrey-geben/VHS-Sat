@@ -9,17 +9,27 @@
     </span>
   </header>
 
-  <div class="watch-grid" id="watch-grid">
-    {# Grid rendered by JS on load and every 10 s. #}
-  </div>
+  <div class="watch-grid" id="watch-grid"></div>
 
   <div class="viewer-empty" id="viewer-empty" style="display:none">
     <p class="viewer-empty-title">Каналы ещё не созданы</p>
     <p class="muted">Администратор может добавить их на
       <a href="{{ admin_url }}channels">{{ admin_url }}channels</a>
     </p>
-    <p class="muted small">Эта страница обновится автоматически, как только появится первый канал.</p>
+    <p class="muted small">Эта страница обновится автоматически,
+      как только появится первый канал.</p>
   </div>
+
+  {% if has_apk %}
+  <a href="/download" class="download-banner">
+    <span class="download-banner-icon">📱</span>
+    <span class="download-banner-text">
+      <strong>Приложение для Android TV</strong>
+      <span class="muted small">Смотрите каналы с пульта, без браузера</span>
+    </span>
+    <span class="download-banner-arrow">→</span>
+  </a>
+  {% endif %}
 </div>
 
 <script>
@@ -43,11 +53,11 @@ function renderGrid(channels) {
   GRID.innerHTML = channels.map((ch, i) => `
     <a class="watch-card ${ch.running ? 'live' : 'off'}"
        href="/watch/${ch.id}">
-      <div class="watch-num">${i + 1}</div>
+      <div class="watch-num">${ch.channel_number || ''}</div>
       <div class="watch-name">${esc(ch.name)}</div>
       <div class="watch-status">${ch.running ? 'LIVE' : 'OFFLINE'}</div>
-      ${ch.running && ch.current_file
-        ? `<div class="watch-now">${esc(ch.current_file)}</div>` : ''}
+      ${ch.running && ch.epg_now
+        ? `<div class="watch-now">${esc(ch.epg_now)}</div>` : ''}
     </a>
   `).join('');
 }
